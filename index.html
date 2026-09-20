@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Tennisturniere planen, Ergebnisse erfassen und Tabellen automatisch berechnen." />
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet" />
+    <meta name="googlebot" content="noindex, nofollow, noarchive, nosnippet" />
+    <meta name="theme-color" content="#2f5fb3" />
+    <title>RSV Finningen – Tennis-Turnierplaner</title>
+    <link rel="icon" type="image/png" href="logo-rsv-finningen.png" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="RSV Finningen Tennis-Turnierplaner Startseite">
+        <img class="brand-logo" src="logo-rsv-finningen.png" alt="Tennisabteilung RSV Finningen" />
+        <span class="brand-title">Turnierplaner</span>
+      </a>
+      <div class="save-state" id="saveState" aria-live="polite"><span></span>Lokal gespeichert</div>
+    </header>
+
+    <main class="app-shell">
+      <section class="intro">
+        <div>
+          <p class="eyebrow">Tennis-Turnierplaner</p>
+          <h1 id="pageTitle">Neues Turnier</h1>
+        </div>
+        <div class="intro-actions">
+          <button class="button button-ghost" id="printButton" type="button">PDF herunterladen</button>
+          <button class="button button-danger" id="resetButton" type="button">Zurücksetzen</button>
+        </div>
+      </section>
+
+      <nav class="tabs" aria-label="Turnierbereiche">
+        <button class="tab is-active" data-tab="setup" type="button"><span>1</span> Vorbereitung</button>
+        <button class="tab" data-tab="schedule" type="button"><span>2</span> Spielplan</button>
+        <button class="tab" data-tab="standings" type="button"><span>3</span> Tabelle</button>
+      </nav>
+
+      <section class="tab-panel is-active" id="setupPanel" data-panel="setup">
+        <div class="setup-grid">
+          <article class="card">
+            <div class="card-heading">
+              <div><p class="step-label">Schritt 1</p><h2>Rahmendaten</h2></div>
+              <span class="card-icon" aria-hidden="true">01</span>
+            </div>
+            <div class="form-grid">
+              <label class="field field-wide">Turniername
+                <input id="tournamentName" type="text" maxlength="80" value="Saisonabschluss Mixed" />
+              </label>
+              <label class="field">Datum
+                <input id="tournamentDate" type="date" />
+              </label>
+              <label class="field">Startzeit
+                <input id="startTime" type="time" value="17:00" />
+              </label>
+              <label class="field">Plätze
+                <input id="courtCount" type="number" min="1" max="12" value="3" />
+              </label>
+              <label class="field">Spieldauer (Min.)
+                <input id="matchDuration" type="number" min="5" max="180" step="5" value="20" />
+              </label>
+              <label class="field">Wechselpause (Min.)
+                <input id="breakDuration" type="number" min="0" max="60" step="5" value="5" />
+              </label>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-heading">
+              <div><p class="step-label">Schritt 2</p><h2>Turniermodus</h2></div>
+              <span class="card-icon" aria-hidden="true">02</span>
+            </div>
+            <fieldset class="segmented" id="modeSelector">
+              <legend class="sr-only">Turniermodus auswählen</legend>
+              <label><input type="radio" name="mode" value="limited" checked /><span>Feste Spielanzahl<small>Ausgeglichene Anzahl je Team</small></span></label>
+              <label><input type="radio" name="mode" value="partnerMix" /><span>Partnerwechsel<small>Neue Doppelpartner in jeder Runde</small></span></label>
+            </fieldset>
+            <label class="field compact-field is-hidden" id="gamesPerTeamWrap"><span id="gamesPerTeamLabel">Spiele pro Team</span>
+              <input id="gamesPerTeam" type="number" min="1" max="20" value="3" />
+            </label>
+          </article>
+        </div>
+
+        <article class="card participants-card">
+          <div class="card-heading participants-heading">
+            <div><p class="step-label">Schritt 3</p><h2>Teilnehmer</h2></div>
+            <div class="toggle" role="group" aria-label="Teilnehmerart">
+              <button class="is-active" type="button" data-entry="teams">Feste Teams</button>
+              <button type="button" data-entry="players">Einzelne Spieler</button>
+            </div>
+          </div>
+          <p class="helper" id="participantHelper">Trage bestehende Doppel-Teams ein.</p>
+          <div id="participantList" class="participant-list"></div>
+          <div class="participant-actions">
+            <button class="button button-ghost" id="addParticipant" type="button">+ Weiteres Team</button>
+            <label class="field inline-field is-hidden" id="pairingWrap">Teambildung
+              <select id="pairingMode"><option value="random">Zufällig mischen</option><option value="sequential">Nach Reihenfolge</option></select>
+            </label>
+            <button class="button button-primary" id="generateButton" type="button">Spielplan erstellen <span aria-hidden="true">→</span></button>
+          </div>
+          <div class="notice is-hidden" id="formNotice" role="alert"></div>
+        </article>
+      </section>
+
+      <section class="tab-panel" id="schedulePanel" data-panel="schedule">
+        <div class="summary-strip" id="scheduleSummary"></div>
+        <div class="section-heading">
+          <div><p class="eyebrow">Automatisch geplant</p><h2>Spielplan</h2></div>
+          <button class="button button-ghost" id="editSetup" type="button">Einstellungen ändern</button>
+        </div>
+        <div class="empty-state" id="scheduleEmpty">
+          <div class="empty-ball" aria-hidden="true"></div>
+          <h3>Noch kein Spielplan</h3>
+          <p>Lege Teilnehmer und Turniermodus in der Vorbereitung fest.</p>
+          <button class="button button-primary" data-go="setup" type="button">Zur Vorbereitung</button>
+        </div>
+        <div class="schedule-list" id="scheduleList"></div>
+      </section>
+
+      <section class="tab-panel" id="standingsPanel" data-panel="standings">
+        <div class="section-heading">
+          <div><p class="eyebrow">Live-Auswertung</p><h2>Aktuelle Tabelle</h2></div>
+          <p class="ranking-rule">Sortierung: Siege · Differenz · erzielte Punkte</p>
+        </div>
+        <div class="empty-state" id="standingsEmpty">
+          <h3>Die Tabelle wartet auf den Spielplan</h3>
+          <p>Sobald Spiele erstellt sind, werden Ergebnisse hier automatisch ausgewertet.</p>
+        </div>
+        <div id="standingsContent"></div>
+      </section>
+    </main>
+
+    <footer>Alle Daten bleiben lokal in diesem Browser.</footer>
+    <script src="app.js"></script>
+  </body>
+</html>
