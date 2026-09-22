@@ -39,6 +39,16 @@
       </nav>
 
       <section class="tab-panel is-active" id="setupPanel" data-panel="setup">
+        <article class="card format-card">
+          <div class="card-heading">
+            <div><p class="eyebrow">Vorbereitung</p><h2>Wie möchtet ihr spielen?</h2></div>
+          </div>
+          <fieldset class="segmented format-selector">
+            <legend class="sr-only">Turnierart auswählen</legend>
+            <label><input type="radio" name="format" value="singles" /><span><b>Einzelturnier</b><strong>1 gegen 1</strong><small>Jeder spielt für sich.</small></span></label>
+            <label><input type="radio" name="format" value="doubles" checked /><span><b>Doppelturnier</b><strong>2 gegen 2</strong><small>Feste oder wechselnde Partner.</small></span></label>
+          </fieldset>
+        </article>
         <div class="setup-grid">
           <article class="card">
             <div class="card-heading">
@@ -69,14 +79,15 @@
 
           <article class="card">
             <div class="card-heading">
-              <div><p class="step-label">Schritt 2</p><h2>Turniermodus</h2></div>
+              <div><p class="step-label">Schritt 2</p><h2 id="modeHeading">Doppelmodus</h2></div>
               <span class="card-icon" aria-hidden="true">02</span>
             </div>
             <fieldset class="segmented" id="modeSelector">
               <legend class="sr-only">Turniermodus auswählen</legend>
-              <label><input type="radio" name="mode" value="limited" checked /><span>Feste Spielanzahl<small>Ausgeglichene Anzahl je Team</small></span></label>
+              <label><input type="radio" name="mode" value="limited" checked /><span>Feste Teams<small>Die Partner bleiben zusammen</small></span></label>
               <label><input type="radio" name="mode" value="partnerMix" /><span>Partnerwechsel<small>Neue Doppelpartner in jeder Runde</small></span></label>
             </fieldset>
+            <p class="helper is-hidden" id="singlesHelper">Jeder spielt für sich gegen unterschiedliche Gegner. Pausen werden im Spielplan angezeigt.</p>
             <label class="field compact-field is-hidden" id="gamesPerTeamWrap"><span id="gamesPerTeamLabel">Spiele pro Team</span>
               <input id="gamesPerTeam" type="number" min="1" max="20" value="3" />
             </label>
@@ -85,14 +96,16 @@
 
         <article class="card participants-card">
           <div class="card-heading participants-heading">
-            <div><p class="step-label">Schritt 3</p><h2>Teilnehmer</h2></div>
-            <div class="toggle" role="group" aria-label="Teilnehmerart">
-              <button class="is-active" type="button" data-entry="teams">Feste Teams</button>
-              <button type="button" data-entry="players">Einzelne Spieler</button>
+            <div><p class="step-label">Schritt 3</p><h2 id="participantsHeading">Teilnehmer</h2></div>
+            <div class="toggle" id="entrySelector" role="group" aria-label="Teilnehmerart">
+              <button class="is-active" type="button" data-entry="teams">Teams eingeben</button>
+              <button type="button" data-entry="players">Aus Spielern bilden</button>
             </div>
           </div>
           <p class="helper" id="participantHelper">Trage bestehende Doppel-Teams ein.</p>
           <div id="participantList" class="participant-list"></div>
+          <p class="setup-summary" id="setupSummary" aria-live="polite"></p>
+          <p class="helper" id="planningHint"></p>
           <div class="participant-actions">
             <button class="button button-ghost" id="addParticipant" type="button">+ Weiteres Team</button>
             <label class="field inline-field is-hidden" id="pairingWrap">Teambildung
@@ -132,6 +145,16 @@
       </section>
     </main>
 
+    <dialog id="planChangeDialog" class="confirm-dialog" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
+      <form method="dialog">
+        <h2 id="confirmTitle">Spielplan ersetzen?</h2>
+        <p id="confirmMessage"></p>
+        <div class="confirm-actions">
+          <button class="button button-ghost" value="cancel" autofocus>Abbrechen</button>
+          <button class="button button-primary" value="confirm">Änderung übernehmen</button>
+        </div>
+      </form>
+    </dialog>
     <footer>Alle Daten bleiben lokal in diesem Browser.</footer>
     <script src="app.js"></script>
   </body>

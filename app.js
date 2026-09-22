@@ -7,7 +7,7 @@
   const defaults = {
     name: 'Saisonabschluss Mixed', date: today, startTime: '17:00', courts: 3,
     duration: 20, breakDuration: 5, mode: 'limited', gamesPerTeam: 3,
-    entryType: 'teams', pairingMode: 'random',
+    format: 'doubles', entryType: 'teams', pairingMode: 'random', participantDrafts: {},
     participants: ['Team Aufschlag', 'Team Volley', 'Team Grundlinie', 'Team Matchball', 'Team Slice', 'Team Topspin'],
     strengths: [2, 2, 2, 2, 2, 2],
     teams: [], matches: [], generatedAt: null
@@ -18,6 +18,9 @@
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
       const merged = saved ? { ...defaults, ...saved } : structuredClone(defaults);
+      merged.participantDrafts = { ...(saved?.participantDrafts || {}) };
+      merged.format = merged.format === 'singles' ? 'singles' : 'doubles';
+      if (merged.format === 'singles') { merged.entryType = 'players'; merged.mode = 'limited'; }
       if (!['limited', 'partnerMix'].includes(merged.mode)) {
         merged.mode = 'limited'; merged.teams = []; merged.matches = []; merged.generatedAt = null;
       }
@@ -37,16 +40,15 @@
     state.courts = clampNumber($('#courtCount').value, 1, 12, 1);
     state.duration = clampNumber($('#matchDuration').value, 5, 180, 20);
     state.breakDuration = clampNumber($('#breakDuration').value, 0, 60, 5);
-    state.mode = $('input[name="mode"]:checked').value;
     state.gamesPerTeam = clampNumber($('#gamesPerTeam').value, 1, 20, 3);
     state.pairingMode = $('#pairingMode').value;
     state.participants = $$('.participant-row input').map(input => input.value.trim());
     const strengthInputs = $$('.strength-select');
     if (strengthInputs.length) state.strengths = strengthInputs.map(select => clampNumber(select.value, 1, 3, 2));
-    saveState(); updateTitle();
+    saveState(); updateTitle(); updateSetupSummary();
   }
   function clampNumber(value, min, max, fallback) {
-    const n = Number(value); return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+    const n = Number(value); return Number.isFinite(n) ? Math.min(max, Math.max(min, Math.floor(n))) : fallback;
   }
   function updateTitle() { $('#pageTitle').textContent = state.name || 'Neues Turnier'; }
 
@@ -55,28 +57,68 @@
     $('#startTime').value = state.startTime; $('#courtCount').value = state.courts;
     $('#matchDuration').value = state.duration; $('#breakDuration').value = state.breakDuration;
     $('#gamesPerTeam').value = state.gamesPerTeam; $('#pairingMode').value = state.pairingMode;
+    $(`input[name="format"][value="${state.format}"]`).checked = true;
     const radio = $(`input[name="mode"][value="${state.mode}"]`); if (radio) radio.checked = true;
     state.strengths = state.participants.map((_, index) => clampNumber(state.strengths?.[index], 1, 3, 2));
-    setEntryType(state.entryType, false); renderParticipants(); updateModeUI(); updateTitle();
+    renderParticipants(); updateModeUI(); updateTitle();
   }
 
-  function setEntryType(type, shouldReset = true) {
+  function rememberParticipants() {
+    const key = state.format === 'singles' ? 'singles' : state.entryType;
+    state.participantDrafts[key] = { participants: [...state.participants], strengths: [...state.strengths] };
+  }
+
+  function restoreParticipants() {
+    const key = state.format === 'singles' ? 'singles' : state.entryType;
+    const draft = state.participantDrafts[key];
+    state.participants = draft ? [...draft.participants] : state.entryType === 'teams'
+      ? ['Team 1', 'Team 2', 'Team 3', 'Team 4']
+      : Array.from({ length: 8 }, (_, i) => `Spieler ${i + 1}`);
+    state.strengths = draft ? [...draft.strengths] : state.participants.map(() => 2);
+  }
+
+  function confirmAction(message) {
+    const dialog = $('#planChangeDialog');
+    $('#confirmMessage').textContent = message;
+    dialog.returnValue = 'cancel';
+    return new Promise(resolve => {
+      dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm'), { once: true });
+      dialog.showModal();
+    });
+  }
+
+  async function confirmPlanChange() {
+    return !state.matches.length || await confirmAction('Beim Wechsel werden der vorhandene Spielplan und alle Ergebnisse gelöscht. Die Teilnehmerlisten bleiben gespeichert. Fortfahren?');
+  }
+
+  function clearPlan() { state.matches = []; state.teams = []; state.generatedAt = null; }
+
+  async function setFormat(format) {
+    if (format === state.format) return;
+    if (!await confirmPlanChange()) { hydrateForm(); return; }
+    readForm(); rememberParticipants();
+    state.format = format; state.mode = 'limited';
+    state.entryType = format === 'singles' ? 'players' : 'teams';
+    restoreParticipants(); clearPlan(); hydrateForm(); hideNotice(); saveState(); renderOutputs();
+  }
+
+  async function setEntryType(type) {
+    if (type === state.entryType) return;
+    if (!await confirmPlanChange()) return;
+    readForm(); rememberParticipants();
     state.entryType = type;
-    $$('.toggle button').forEach(b => b.classList.toggle('is-active', b.dataset.entry === type));
-    $('#participantHelper').textContent = type === 'teams'
-      ? 'Trage bestehende Doppel-Teams ein.'
-      : state.mode === 'partnerMix'
-        ? 'Trage einzelne Spieler ein. Die Doppelpartner werden in jeder Runde möglichst abwechslungsreich neu gemischt.'
-        : 'Trage einzelne Spieler ein. Beim Erstellen werden daraus feste Zweier-Teams gebildet.';
-    $('#pairingWrap').classList.toggle('is-hidden', type !== 'players' || state.mode === 'partnerMix');
-    $('#addParticipant').textContent = type === 'teams' ? '+ Weiteres Team' : '+ Weitere Person';
-    if (shouldReset) {
-      state.participants = type === 'teams'
-        ? ['Team 1', 'Team 2', 'Team 3', 'Team 4']
-        : ['Spieler 1', 'Spieler 2', 'Spieler 3', 'Spieler 4', 'Spieler 5', 'Spieler 6', 'Spieler 7', 'Spieler 8'];
-      state.strengths = state.participants.map(() => 2);
-      state.matches = []; state.teams = []; renderParticipants(); saveState(); renderOutputs();
+    restoreParticipants(); clearPlan(); hydrateForm(); hideNotice(); saveState(); renderOutputs();
+  }
+
+  async function setMode(mode) {
+    if (mode === state.mode) return;
+    if (!await confirmPlanChange()) { hydrateForm(); return; }
+    readForm();
+    if (mode === 'partnerMix' && state.entryType !== 'players') {
+      rememberParticipants(); state.entryType = 'players'; restoreParticipants();
     }
+    state.mode = mode;
+    clearPlan(); hydrateForm(); hideNotice(); saveState(); renderOutputs();
   }
 
   function renderParticipants() {
@@ -98,26 +140,59 @@
       const strengthSelect = $('.strength-select', row);
       if (strengthSelect) strengthSelect.addEventListener('change', () => { state.strengths[index] = Number(strengthSelect.value); saveState(); });
       $('.icon-button', row).addEventListener('click', () => {
-        state.participants.splice(index, 1); state.strengths.splice(index, 1); renderParticipants(); saveState();
+        state.participants.splice(index, 1); state.strengths.splice(index, 1); renderParticipants(); saveState(); updateSetupSummary();
       });
       list.appendChild(row);
     });
   }
 
   function updateModeUI() {
-    const mode = $('input[name="mode"]:checked')?.value || state.mode;
-    $('#gamesPerTeamWrap').classList.toggle('is-hidden', !['limited', 'partnerMix'].includes(mode));
-    $('#gamesPerTeamLabel').textContent = mode === 'partnerMix' ? 'Anzahl Runden' : 'Spiele pro Team';
-    $('#pairingWrap').classList.toggle('is-hidden', state.entryType !== 'players' || mode === 'partnerMix');
-    if (state.entryType === 'players') {
-      $('#participantHelper').textContent = mode === 'partnerMix'
-        ? 'Trage einzelne Spieler ein. Die Doppelpartner werden in jeder Runde möglichst abwechslungsreich neu gemischt.'
-        : 'Trage einzelne Spieler ein. Beim Erstellen werden daraus feste Zweier-Teams gebildet.';
-    }
+    const singles = state.format === 'singles', mix = state.mode === 'partnerMix';
+    $('#modeHeading').textContent = singles ? 'Spiele pro Spieler' : 'Doppelmodus';
+    $('#modeSelector').classList.toggle('is-hidden', singles);
+    $$('input[name="mode"]').forEach(input => { input.disabled = singles; });
+    $('#singlesHelper').classList.toggle('is-hidden', !singles);
+    $('#entrySelector').classList.toggle('is-hidden', singles || mix);
+    $$('.toggle button').forEach(b => {
+      b.classList.toggle('is-active', b.dataset.entry === state.entryType);
+      b.setAttribute('aria-pressed', String(b.dataset.entry === state.entryType));
+    });
+    $('#gamesPerTeamWrap').classList.remove('is-hidden');
+    $('#gamesPerTeamLabel').textContent = singles ? 'Spiele pro Spieler' : mix ? 'Anzahl Runden' : 'Spiele pro Team';
+    $('#participantsHeading').textContent = singles || mix ? 'Spieler' : 'Teilnehmer';
+    $('#pairingWrap').classList.toggle('is-hidden', singles || state.entryType !== 'players' || mix);
+    $('#addParticipant').textContent = state.entryType === 'teams' ? '+ Weiteres Team' : '+ Weitere Person';
+    $('#participantHelper').textContent = singles ? 'Trage jeden Spieler einzeln ein. Gespielt wird 1 gegen 1.'
+      : state.entryType === 'teams' ? 'Trage bestehende Doppel-Teams ein.'
+      : mix ? 'Trage einzelne Spieler ein. Die Doppelpartner werden in jeder Runde möglichst abwechslungsreich neu gemischt.'
+      : 'Trage einzelne Spieler ein. Beim Erstellen werden daraus feste Zweier-Teams gebildet.';
+    updateSetupSummary();
+  }
+
+  function updateSetupSummary() {
+    const singles = state.format === 'singles', mix = state.mode === 'partnerMix';
+    const count = state.participants.filter(name => name.trim()).length;
+    const teams = state.entryType === 'teams' ? count : Math.floor(count / 2);
+    const competitors = singles ? count : teams;
+    const games = mix ? state.gamesPerTeam : Math.min(state.gamesPerTeam, Math.max(0, competitors - 1));
+    const uneven = singles ? count * games % 2 === 1 : !mix && teams % 2 === 1 && games > 0;
+    const amount = singles || mix ? `${count} Spieler` : `${teams} Teams${state.entryType === 'players' ? ` aus ${count} Spielern` : ''}`;
+    const frequency = mix ? `${games} Runden mit Partnerwechsel` : `${uneven ? 'bis zu ' : ''}${games} Spiele pro ${singles ? 'Spieler' : 'Team'}`;
+    $('#setupSummary').textContent = `${singles ? 'Einzel' : 'Doppel'} · ${amount} · ${state.courts} ${state.courts === 1 ? 'Platz' : 'Plätze'} · ${frequency}`;
+    const hints = [];
+    if (singles && count < 2) hints.push('Für ein Einzelturnier werden mindestens zwei Spieler benötigt.');
+    if (!mix && competitors >= 2 && state.gamesPerTeam > competitors - 1) hints.push(`Ohne Rückspiele sind höchstens ${competitors - 1} Spiele pro ${singles ? 'Spieler' : 'Team'} möglich.`);
+    if (singles && uneven) hints.push('Bei dieser Kombination aus Spieler- und Spielanzahl hat ein ausgeloster Spieler ein Spiel weniger.');
+    if (!singles && uneven) hints.push('Bei ungerader Teamzahl haben einzelne Teams durch Pausen ein Spiel weniger.');
+    if (singles && count % 2 && count >= 3) hints.push('Bei ungerader Spielerzahl werden Pausen eingeplant.');
+    if (!singles && !mix && state.entryType === 'players' && count % 2) hints.push('Für feste Doppel-Teams wird eine gerade Spielerzahl benötigt.');
+    $('#planningHint').textContent = hints.join(' ');
+    $('#planningHint').classList.toggle('is-hidden', !hints.length);
   }
 
   function buildTeams() {
     const names = state.participants.map(n => n.trim()).filter(Boolean);
+    if (new Set(names.map(n => n.toLowerCase())).size !== names.length) throw new Error('Jeder Teilnehmername muss eindeutig sein.');
     if (state.entryType === 'teams') return names;
     if (names.length % 2) throw new Error('Für Doppel-Teams wird eine gerade Anzahl einzelner Spieler benötigt.');
     const pool = [...names];
@@ -125,8 +200,9 @@
     return Array.from({ length: pool.length / 2 }, (_, i) => `${pool[i * 2]} & ${pool[i * 2 + 1]}`);
   }
 
-  function createTournament() {
+  async function createTournament() {
     readForm(); hideNotice();
+    if (state.matches.some(m => m.scoreA !== '' || m.scoreB !== '') && !await confirmAction('Spielplan neu erstellen und vorhandene Ergebnisse löschen?')) return;
     try {
       generateTournamentPlan();
     } catch (error) { showNotice(error.message); }
@@ -134,7 +210,13 @@
 
   function generateTournamentPlan() {
     let selected;
-    if (state.mode === 'partnerMix') {
+    if (state.format === 'singles') {
+      const players = state.participants.map(n => n.trim()).filter(Boolean);
+      if (players.length < 2) throw new Error('Bitte trage mindestens zwei Spieler ein.');
+      if (new Set(players.map(n => n.toLowerCase())).size !== players.length) throw new Error('Jeder Spielername muss eindeutig sein.');
+      state.teams = players;
+      selected = generateSingles(players, state.gamesPerTeam);
+    } else if (state.mode === 'partnerMix') {
       const players = state.participants.map(n => n.trim()).filter(Boolean);
       if (state.entryType !== 'players') throw new Error('Der Partnerwechsel-Modus benötigt einzelne Spieler statt fester Teams.');
       if (players.length < 4) throw new Error('Für wechselnde Doppel werden mindestens vier Spieler benötigt.');
@@ -152,6 +234,38 @@
     state.matches = scheduleMatches(selected);
     state.generatedAt = Date.now(); saveState(); renderOutputs(); showTab('schedule');
     return { teams: state.teams.length, matches: state.matches.length };
+  }
+
+  function generateSingles(players, requestedGames) {
+    const count = Math.min(requestedGames, players.length - 1);
+    const pool = [...players]; shuffle(pool);
+    // An odd sum of appearances cannot form pairs: one randomly chosen player plays once less.
+    const pending = pool.map((name, i) => ({ name, remaining: count - (i === 0 && players.length * count % 2 ? 1 : 0) }));
+    const matches = [];
+    // Havel–Hakimi constructs a simple graph with these (almost equal) target degrees.
+    while (pending.length) {
+      pending.sort((a, b) => b.remaining - a.remaining);
+      const current = pending.shift();
+      for (let i = 0; i < current.remaining; i++) {
+        const opponent = pending[i];
+        if (!opponent || opponent.remaining <= 0) throw new Error('Die gewünschte Spielanzahl konnte nicht geplant werden.');
+        opponent.remaining--;
+        matches.push({ id: crypto.randomUUID(), teamA: current.name, teamB: opponent.name, group: '', phase: '', scoreA: '', scoreB: '' });
+      }
+    }
+    const rounds = [];
+    while (matches.length) {
+      const active = new Set(), roundMatches = [];
+      for (let i = 0; i < matches.length;) {
+        const match = matches[i];
+        if (active.has(match.teamA) || active.has(match.teamB)) { i++; continue; }
+        active.add(match.teamA); active.add(match.teamB);
+        roundMatches.push({ ...match, round: rounds.length + 1 }); matches.splice(i, 1);
+      }
+      const byes = players.filter(name => !active.has(name));
+      rounds.push({ label: `Runde ${rounds.length + 1}`, note: byes.length ? `Pause: ${byes.join(', ')}` : '', matches: roundMatches });
+    }
+    return rounds;
   }
 
   function generateRoundRobin(teams, group = '') {
@@ -282,7 +396,7 @@
     const endSlot = Math.max(...state.matches.map(m => m.slot)) + 1;
     const endTime = addMinutes(state.startTime, endSlot * (state.duration + state.breakDuration) - state.breakDuration);
     $('#scheduleSummary').innerHTML = [
-      [state.mode === 'partnerMix' ? 'Spieler' : 'Teams', state.teams.length], ['Spiele', `${completed} / ${state.matches.length}`], ['Plätze', state.courts], ['Zeitraum', `${state.startTime}–${endTime} Uhr`]
+      [state.format === 'singles' ? 'Einzel · Spieler' : state.mode === 'partnerMix' ? 'Doppel · Spieler' : 'Doppel · Teams', state.teams.length], ['Spiele', `${completed} / ${state.matches.length}`], ['Plätze', state.courts], ['Zeitraum', `${state.startTime}–${endTime} Uhr`]
     ].map(([label, value]) => `<div class="summary-item"><span>${label}</span><strong>${escapeHtml(String(value))}</strong></div>`).join('');
 
     const bySlot = Map.groupBy ? Map.groupBy(state.matches, m => m.slot) : state.matches.reduce((map, m) => map.set(m.slot, [...(map.get(m.slot) || []), m]), new Map());
@@ -329,7 +443,7 @@
       const section = document.createElement('section'); section.className = 'standings-group';
       if (group) section.innerHTML = `<h3>Gruppe ${group}</h3>`;
       const wrap = document.createElement('div'); wrap.className = 'table-wrap';
-      wrap.innerHTML = `<table><thead><tr><th>Rang</th><th>${state.mode === 'partnerMix' ? 'Spieler' : 'Team'}</th><th>Sp.</th><th>Siege</th><th>Nied.</th><th>Punkte</th><th>Diff.</th><th>Form</th></tr></thead><tbody>
+      wrap.innerHTML = `<table><thead><tr><th>Rang</th><th>${state.format === 'singles' || state.mode === 'partnerMix' ? 'Spieler' : 'Team'}</th><th>Sp.</th><th>Siege</th><th>Nied.</th><th>Punkte</th><th>Diff.</th><th>Form</th></tr></thead><tbody>
         ${rows.map((r, i) => `<tr><td class="rank">${i + 1}</td><td class="team-cell">${escapeHtml(r.name)}</td><td>${r.played}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.for}:${r.against}</td><td>${signed(r.diff)}</td><td><span class="form-indicator" aria-label="Letzte Ergebnisse">${r.form.slice(-5).map(x => `<span class="form-dot ${x}" title="${x === 'win' ? 'Sieg' : 'Niederlage'}"></span>`).join('')}</span></td></tr>`).join('')}
         </tbody></table>`;
       section.appendChild(wrap); root.appendChild(section);
@@ -434,7 +548,7 @@
   }
 
   function buildSchedulePdf(logo = null) {
-    const modeName = state.mode === 'partnerMix' ? 'Partnerwechsel' : 'Feste Spielanzahl';
+    const modeName = state.format === 'singles' ? 'Einzel' : state.mode === 'partnerMix' ? 'Doppel | Partnerwechsel' : 'Doppel | Feste Teams';
     const bySlot = state.matches.reduce((map, match) => map.set(match.slot, [...(map.get(match.slot) || []), match]), new Map());
     const slots = [...bySlot.entries()].map(([slot, matches], index) => ({
       number: index + 1,
@@ -621,7 +735,8 @@
           type: 'object',
           properties: {
             name: { type: 'string', minLength: 1, maxLength: 80 },
-            participants: { type: 'array', minItems: 3, items: { type: 'string', minLength: 1, maxLength: 60 } },
+            participants: { type: 'array', minItems: 2, items: { type: 'string', minLength: 1, maxLength: 60 } },
+            format: { type: 'string', enum: ['singles', 'doubles'], description: 'Einzel oder Doppel; ohne Angabe wird Doppel verwendet.' },
             entryType: { type: 'string', enum: ['teams', 'players'] },
             mode: { type: 'string', enum: ['limited', 'partnerMix'] },
             courts: { type: 'integer', minimum: 1, maximum: 12 },
@@ -632,21 +747,32 @@
           additionalProperties: false
         },
         annotations: { readOnlyHint: false, untrustedContentHint: false },
-        execute(input) {
+        async execute(input) {
           if (!input || typeof input.name !== 'string' || !Array.isArray(input.participants)) throw new Error('Ungültige Turnierdaten.');
+          const format = input.format ?? 'doubles';
+          if (!['singles', 'doubles'].includes(format)) throw new Error('Ungültige Turnierart.');
+          if (format === 'singles' && (input.entryType !== 'players' || input.mode !== 'limited')) throw new Error('Einzel benötigt einzelne Spieler und eine feste Spielanzahl.');
           if (!['teams', 'players'].includes(input.entryType) || !['limited', 'partnerMix'].includes(input.mode)) throw new Error('Ungültiger Teilnehmer- oder Turniermodus.');
           if (input.mode === 'partnerMix' && input.entryType !== 'players') throw new Error('Partnerwechsel benötigt einzelne Spieler.');
           if (!Number.isInteger(input.courts) || input.courts < 1 || input.courts > 12) throw new Error('Die Platzanzahl muss zwischen 1 und 12 liegen.');
           const clean = input.participants.map(value => typeof value === 'string' ? value.trim() : '').filter(Boolean);
           if (clean.length !== input.participants.length) throw new Error('Alle Teilnehmer benötigen einen Namen.');
+          if (new Set(clean.map(name => name.toLowerCase())).size !== clean.length) throw new Error('Jeder Teilnehmername muss eindeutig sein.');
+          const minimum = format === 'singles' ? 2 : input.mode === 'partnerMix' ? 4 : input.entryType === 'teams' ? 3 : 6;
+          if (clean.length < minimum) throw new Error(`Für diese Turnierart werden mindestens ${minimum} Teilnehmer benötigt.`);
+          if (format === 'doubles' && input.mode === 'limited' && input.entryType === 'players' && clean.length % 2) throw new Error('Für feste Doppel-Teams wird eine gerade Spielerzahl benötigt.');
           if (input.strengths && (input.strengths.length !== clean.length || input.strengths.some(value => !Number.isInteger(value) || value < 1 || value > 3))) throw new Error('Die Spielstärken müssen für alle Teilnehmer als Stufe 1 bis 3 angegeben werden.');
+          if (!await confirmPlanChange()) return { status: 'cancelled' };
+          rememberParticipants();
+          clearPlan();
+          state.format = format;
           state.name = input.name.trim(); state.participants = clean; state.entryType = input.entryType;
           state.mode = input.mode; state.courts = input.courts;
           state.strengths = input.strengths ? [...input.strengths] : clean.map(() => 2);
           if (input.gamesPerTeam != null) state.gamesPerTeam = clampNumber(input.gamesPerTeam, 1, 20, 3);
           hydrateForm();
           const result = generateTournamentPlan();
-          return { status: 'created', ...result, mode: state.mode };
+          return { status: 'created', ...result, mode: state.mode, format: state.format };
         }
       })).catch(() => {});
     } catch { /* Browser unterstützt WebMCP noch nicht. */ }
@@ -654,19 +780,11 @@
 
   $$('.tab').forEach(tab => tab.addEventListener('click', () => showTab(tab.dataset.tab)));
   $$('[data-go]').forEach(button => button.addEventListener('click', () => showTab(button.dataset.go)));
-  $$('.toggle button').forEach(button => button.addEventListener('click', () => {
-    if (button.dataset.entry === 'teams' && $('input[name="mode"]:checked')?.value === 'partnerMix') {
-      $('input[name="mode"][value="limited"]').checked = true;
-      state.mode = 'limited'; updateModeUI();
-    }
-    setEntryType(button.dataset.entry);
-  }));
-  $$('input[name="mode"]').forEach(radio => radio.addEventListener('change', () => {
-    if (radio.value === 'partnerMix' && state.entryType !== 'players') setEntryType('players');
-    state.mode = radio.value; updateModeUI(); renderParticipants(); readForm();
-  }));
-  $$('#setupPanel input, #setupPanel select').forEach(input => input.addEventListener('change', readForm));
-  $('#addParticipant').addEventListener('click', () => { state.participants.push(''); state.strengths.push(2); renderParticipants(); saveState(); $$('.participant-row input').at(-1).focus(); });
+  $$('input[name="format"]').forEach(radio => radio.addEventListener('change', () => setFormat(radio.value)));
+  $$('.toggle button').forEach(button => button.addEventListener('click', () => setEntryType(button.dataset.entry)));
+  $$('input[name="mode"]').forEach(radio => radio.addEventListener('change', () => setMode(radio.value)));
+  $$('#setupPanel input:not([type="radio"]), #setupPanel select').forEach(input => input.addEventListener('change', readForm));
+  $('#addParticipant').addEventListener('click', () => { state.participants.push(''); state.strengths.push(2); renderParticipants(); saveState(); updateSetupSummary(); $$('.participant-row input').at(-1).focus(); });
   $('#generateButton').addEventListener('click', createTournament);
   $('#editSetup').addEventListener('click', () => showTab('setup'));
   $('#printButton').addEventListener('click', downloadTournamentPdf);
