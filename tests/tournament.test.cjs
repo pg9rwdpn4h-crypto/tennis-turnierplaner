@@ -11,9 +11,18 @@ function planner(saved = null) {
   const startup = source.lastIndexOf("\n  $$('.tab').forEach");
   assert.ok(startup > 0);
   const sandbox = { structuredClone, crypto: webcrypto, localStorage: { getItem: () => JSON.stringify(saved) } };
-  vm.runInNewContext(source.slice(0, startup) + '\n globalThis.planner = { state, generateSingles, generateRoundRobin, limitRounds, generatePartnerMix, partnerMixValidation, scheduleMatches, calculateStandings, calculatePlayerStandings, buildSchedulePdf, rememberParticipants, restoreParticipants }; })();', sandbox);
+  vm.runInNewContext(source.slice(0, startup) + '\n globalThis.planner = { state, generateSingles, generateRoundRobin, limitRounds, generatePartnerMix, partnerMixValidation, scheduleMatches, calculateStandings, calculatePlayerStandings, buildSchedulePdf, rememberParticipants, restoreParticipants, formatCountdown, countdownRemaining }; })();', sandbox);
   return sandbox.planner;
 }
+
+test('round timer formats the duration and compensates for delayed updates', () => {
+  const p = planner();
+  assert.equal(p.formatCountdown(0), '00:00');
+  assert.equal(p.formatCountdown(65), '01:05');
+  assert.equal(p.formatCountdown(1200), '20:00');
+  assert.equal(p.countdownRemaining(11_250, 10_000), 2);
+  assert.equal(p.countdownRemaining(9_999, 10_000), 0);
+});
 
 test('singles: target appearances, unique opponents, byes and no simultaneous double bookings', () => {
   const p = planner();
@@ -122,3 +131,4 @@ test('fixed doubles and partner rotation retain their planning behavior', () => 
   p.state.courts = 3; p.state.strengths = ninePlayers.map(() => 2);
   assert.deepEqual(Array.from(p.generatePartnerMix(ninePlayers, 4), round => round.matches.length), [2, 2, 2, 2, 1]);
 });
+

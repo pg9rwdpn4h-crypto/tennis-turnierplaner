@@ -13,6 +13,11 @@
     teams: [], matches: [], generatedAt: null
   };
   let state = loadState();
+  let timerRemainingSeconds = state.duration * 60;
+  let timerEndAt = null;
+  let timerInterval = null;
+  let timerFinished = false;
+  let audioContext = null;
 
   function loadState() {
     try {
@@ -91,7 +96,7 @@
     return !state.matches.length || await confirmAction('Beim Wechsel werden der vorhandene Spielplan und alle Ergebnisse gelöscht. Die Teilnehmerlisten bleiben gespeichert. Fortfahren?');
   }
 
-  function clearPlan() { state.matches = []; state.teams = []; state.generatedAt = null; }
+  function clearPlan() { state.matches = []; state.teams = []; state.generatedAt = null; resetRoundTimer(); }
 
   async function setFormat(format) {
     if (format === state.format) return;
@@ -236,6 +241,7 @@
       selected = limitRounds(base, state.gamesPerTeam, teams.length);
     }
     state.matches = scheduleMatches(selected);
+    resetRoundTimer();
     state.generatedAt = Date.now(); saveState(); renderOutputs(); showTab('schedule');
     return { teams: state.teams.length, matches: state.matches.length };
   }
@@ -412,7 +418,89 @@
     $('#scheduleEmpty').classList.toggle('is-hidden', hasMatches);
     $('#standingsEmpty').classList.toggle('is-hidden', hasMatches);
     $('#scheduleSummary').classList.toggle('is-hidden', !hasMatches);
+    $('#roundTimer').classList.toggle('is-hidden', !hasMatches);
+    renderRoundTimer();
     renderSchedule(); renderStandings();
+  }
+
+  function formatCountdown(totalSeconds) {
+    const seconds = Math.max(0, Math.ceil(Number(totalSeconds) || 0));
+    return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  }
+
+  function countdownRemaining(endAt, now = Date.now()) {
+    return Math.max(0, Math.ceil((endAt - now) / 1000));
+  }
+
+  function renderRoundTimer() {
+    const display = $('#timerDisplay');
+    if (!display) return;
+    const running = timerEndAt !== null;
+    display.textContent = formatCountdown(timerRemainingSeconds);
+    $('#roundTimer').classList.toggle('is-finished', timerFinished);
+    $('#timerStatus').textContent = timerFinished ? 'Zeit abgelaufen' : running ? 'Läuft' : timerRemainingSeconds < state.duration * 60 ? 'Pausiert' : `Bereit · ${state.duration} Min.`;
+    $('#timerToggle').textContent = running ? 'Pause' : timerRemainingSeconds < state.duration * 60 && timerRemainingSeconds > 0 ? 'Fortsetzen' : 'Starten';
+  }
+
+  function stopTimerInterval() {
+    if (timerInterval !== null) clearInterval(timerInterval);
+    timerInterval = null;
+  }
+
+  function resetRoundTimer() {
+    stopTimerInterval();
+    timerEndAt = null;
+    timerRemainingSeconds = state.duration * 60;
+    timerFinished = false;
+    renderRoundTimer();
+  }
+
+  function updateRoundTimer() {
+    if (timerEndAt === null) return;
+    timerRemainingSeconds = countdownRemaining(timerEndAt);
+    if (timerRemainingSeconds === 0) {
+      stopTimerInterval();
+      timerEndAt = null;
+      timerFinished = true;
+      playTimerSound();
+    }
+    renderRoundTimer();
+  }
+
+  async function toggleRoundTimer() {
+    if (timerEndAt !== null) {
+      timerRemainingSeconds = countdownRemaining(timerEndAt);
+      stopTimerInterval(); timerEndAt = null; renderRoundTimer();
+      return;
+    }
+    if (timerRemainingSeconds <= 0) resetRoundTimer();
+    timerFinished = false;
+    await prepareTimerSound();
+    timerEndAt = Date.now() + timerRemainingSeconds * 1000;
+    timerInterval = setInterval(updateRoundTimer, 250);
+    renderRoundTimer();
+  }
+
+  async function prepareTimerSound() {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    audioContext ||= new AudioContextClass();
+    if (audioContext.state === 'suspended') await audioContext.resume();
+  }
+
+  function playTimerSound() {
+    if (!audioContext || audioContext.state !== 'running') return;
+    const start = audioContext.currentTime;
+    [0, .28, .56].forEach((offset, index) => {
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      oscillator.frequency.value = index === 1 ? 660 : 880;
+      gain.gain.setValueAtTime(.0001, start + offset);
+      gain.gain.exponentialRampToValueAtTime(.14, start + offset + .015);
+      gain.gain.exponentialRampToValueAtTime(.0001, start + offset + .2);
+      oscillator.connect(gain); gain.connect(audioContext.destination);
+      oscillator.start(start + offset); oscillator.stop(start + offset + .21);
+    });
   }
 
   function renderSchedule() {
@@ -813,11 +901,14 @@
   $('#addParticipant').addEventListener('click', () => { state.participants.push(''); state.strengths.push(2); renderParticipants(); saveState(); updateSetupSummary(); $$('.participant-row input').at(-1).focus(); });
   $('#generateButton').addEventListener('click', createTournament);
   $('#editSetup').addEventListener('click', () => showTab('setup'));
+  $('#timerToggle').addEventListener('click', toggleRoundTimer);
+  $('#timerReset').addEventListener('click', resetRoundTimer);
   $('#printButton').addEventListener('click', downloadTournamentPdf);
   $('#resetButton').addEventListener('click', () => {
     if (!confirm('Turnier und alle Ergebnisse wirklich zurücksetzen?')) return;
-    localStorage.removeItem(STORAGE_KEY); state = structuredClone(defaults); hydrateForm(); renderOutputs(); showTab('setup');
+    localStorage.removeItem(STORAGE_KEY); state = structuredClone(defaults); resetRoundTimer(); hydrateForm(); renderOutputs(); showTab('setup');
   });
 
   hydrateForm(); renderOutputs(); saveState(); registerWebMcp();
 })();
+
