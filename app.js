@@ -158,7 +158,7 @@
       b.setAttribute('aria-pressed', String(b.dataset.entry === state.entryType));
     });
     $('#gamesPerTeamWrap').classList.remove('is-hidden');
-    $('#gamesPerTeamLabel').textContent = singles ? 'Spiele pro Spieler' : mix ? 'Anzahl Runden' : 'Spiele pro Team';
+    $('#gamesPerTeamLabel').textContent = singles || mix ? 'Spiele pro Spieler' : 'Spiele pro Team';
     $('#participantsHeading').textContent = singles || mix ? 'Spieler' : 'Teilnehmer';
     $('#pairingWrap').classList.toggle('is-hidden', singles || state.entryType !== 'players' || mix);
     $('#addParticipant').textContent = state.entryType === 'teams' ? '+ Weiteres Team' : '+ Weitere Person';
@@ -177,7 +177,7 @@
     const games = mix ? state.gamesPerTeam : Math.min(state.gamesPerTeam, Math.max(0, competitors - 1));
     const uneven = singles ? count * games % 2 === 1 : !mix && teams % 2 === 1 && games > 0;
     const amount = singles || mix ? `${count} Spieler` : `${teams} Teams${state.entryType === 'players' ? ` aus ${count} Spielern` : ''}`;
-    const frequency = mix ? `${games} Runden mit Partnerwechsel` : `${uneven ? 'bis zu ' : ''}${games} Spiele pro ${singles ? 'Spieler' : 'Team'}`;
+    const frequency = `${uneven ? 'bis zu ' : ''}${games} Spiele pro ${singles || mix ? 'Spieler' : 'Team'}`;
     $('#setupSummary').textContent = `${singles ? 'Einzel' : 'Doppel'} · ${amount} · ${state.courts} ${state.courts === 1 ? 'Platz' : 'Plätze'} · ${frequency}`;
     const hints = [];
     if (singles && count < 2) hints.push('Für ein Einzelturnier werden mindestens zwei Spieler benötigt.');
@@ -186,6 +186,10 @@
     if (!singles && uneven) hints.push('Bei ungerader Teamzahl haben einzelne Teams durch Pausen ein Spiel weniger.');
     if (singles && count % 2 && count >= 3) hints.push('Bei ungerader Spielerzahl werden Pausen eingeplant.');
     if (!singles && !mix && state.entryType === 'players' && count % 2) hints.push('Für feste Doppel-Teams wird eine gerade Spielerzahl benötigt.');
+    if (mix && count >= 4) {
+      const mixError = partnerMixValidation(count, games);
+      if (mixError) hints.push(mixError);
+    }
     $('#planningHint').textContent = hints.join(' ');
     $('#planningHint').classList.toggle('is-hidden', !hints.length);
   }
@@ -289,54 +293,64 @@
     return rounds.slice(0, max).map((round, i) => ({ ...round, label: `Runde ${i + 1}` }));
   }
 
-  function generatePartnerMix(players, roundCount) {
+  function partnerMixValidation(playerCount, gamesPerPlayer) {
+    if (playerCount < 4) return 'Für Partnerwechsel werden mindestens vier Spieler benötigt.';
+    if ((playerCount * gamesPerPlayer) % 4 !== 0) {
+      return `${playerCount} Spieler × ${gamesPerPlayer} Spiele ergeben keine vollständigen Doppel. Wähle eine Spielanzahl, bei der das Ergebnis durch 4 teilbar ist.`;
+    }
+    return '';
+  }
+
+  function generatePartnerMix(players, gamesPerPlayer) {
+    const validationError = partnerMixValidation(players.length, Number(gamesPerPlayer));
+    if (validationError) throw new Error(validationError);
     const partnerCounts = new Map(), opponentCounts = new Map();
-    const playCounts = Object.fromEntries(players.map(name => [name, 0]));
     const strengths = Object.fromEntries(players.map((name, index) => [name, clampNumber(state.strengths[index], 1, 3, 2)]));
-    const rounds = [];
-    for (let round = 1; round <= Number(roundCount); round++) {
-      let best = null;
-      for (let attempt = 0; attempt < 240; attempt++) {
-        const ordered = [...players]
-          .map(name => ({ name, priority: playCounts[name] * 100 + Math.random() * 70 }))
-          .sort((a, b) => a.priority - b.priority)
-          .map(item => item.name);
-        const activeCount = Math.floor(ordered.length / 4) * 4;
-        const active = ordered.slice(0, activeCount), byes = ordered.slice(activeCount);
-        const matches = []; let score = active.reduce((sum, name) => sum + playCounts[name] * 20, 0);
-        for (let i = 0; i < active.length; i += 4) {
-          const group = active.slice(i, i + 4);
-          const options = [
-            [[group[0], group[1]], [group[2], group[3]]],
-            [[group[0], group[2]], [group[1], group[3]]],
-            [[group[0], group[3]], [group[1], group[2]]]
-          ];
-          const ranked = options.map(teams => ({ teams, score: mixPairingScore(teams, partnerCounts, opponentCounts, strengths) }))
-            .sort((a, b) => a.score - b.score);
-          score += ranked[0].score;
-          matches.push(ranked[0].teams);
-        }
-        score += byes.reduce((sum, name) => sum + Math.max(0, 8 - playCounts[name]) * 4, 0);
-        if (!best || score < best.score) best = { score, matches, byes };
-      }
-      const roundMatches = best.matches.map(([playersA, playersB]) => {
+    const remaining = Object.fromEntries(players.map(name => [name, Number(gamesPerPlayer)]));
+    const unscheduled = [];
+    while (Object.values(remaining).some(Boolean)) {
+      const group = [...players]
+        .filter(name => remaining[name] > 0)
+        .map(name => ({ name, remaining: remaining[name], tie: Math.random() }))
+        .sort((a, b) => b.remaining - a.remaining || a.tie - b.tie)
+        .slice(0, 4)
+        .map(item => item.name);
+      if (group.length < 4) throw new Error('Die gewünschte Spielanzahl lässt sich mit diesen Spielern nicht vollständig planen.');
+      group.forEach(name => remaining[name]--);
+      const options = [
+        [[group[0], group[1]], [group[2], group[3]]],
+        [[group[0], group[2]], [group[1], group[3]]],
+        [[group[0], group[3]], [group[1], group[2]]]
+      ];
+      const [playersA, playersB] = options
+        .map(teams => ({ teams, score: mixPairingScore(teams, partnerCounts, opponentCounts, strengths) }))
+        .sort((a, b) => a.score - b.score)[0].teams;
         incrementCount(partnerCounts, pairKey(...playersA));
         incrementCount(partnerCounts, pairKey(...playersB));
         playersA.forEach(a => playersB.forEach(b => incrementCount(opponentCounts, pairKey(a, b))));
-        [...playersA, ...playersB].forEach(name => playCounts[name]++);
-        return {
-          id: crypto.randomUUID(), teamA: playersA.join(' & '), teamB: playersB.join(' & '),
-          playersA, playersB, phase: 'Partnerwechsel', round, scoreA: '', scoreB: ''
-        };
-      });
-      rounds.push({
-        label: `Runde ${round}`,
-        phase: 'Partnerwechsel',
-        note: best.byes.length ? `Pause: ${best.byes.join(', ')}` : '',
-        matches: roundMatches
+      unscheduled.push({
+        id: crypto.randomUUID(), teamA: playersA.join(' & '), teamB: playersB.join(' & '),
+        playersA, playersB, phase: 'Partnerwechsel', scoreA: '', scoreB: ''
       });
     }
-    return rounds;
+    const rounds = [];
+    unscheduled.forEach(match => {
+      const participants = [...match.playersA, ...match.playersB];
+      let round = rounds.find(candidate => participants.every(name => !candidate.active.has(name)));
+      if (!round) { round = { active: new Set(), matches: [] }; rounds.push(round); }
+      participants.forEach(name => round.active.add(name));
+      round.matches.push(match);
+    });
+    return rounds.map((round, index) => {
+      const roundNumber = index + 1;
+      const active = round.active;
+      const byes = players.filter(name => !active.has(name));
+      return {
+        label: `Runde ${roundNumber}`, phase: 'Partnerwechsel',
+        note: byes.length ? `Pause: ${byes.join(', ')}` : '',
+        matches: round.matches.map(match => ({ ...match, round: roundNumber }))
+      };
+    });
   }
 
   function mixPairingScore([teamA, teamB], partnerCounts, opponentCounts, strengths) {
@@ -740,7 +754,7 @@
             entryType: { type: 'string', enum: ['teams', 'players'] },
             mode: { type: 'string', enum: ['limited', 'partnerMix'] },
             courts: { type: 'integer', minimum: 1, maximum: 12 },
-            gamesPerTeam: { type: 'integer', minimum: 1, maximum: 20 },
+            gamesPerTeam: { type: 'integer', minimum: 1, maximum: 20, description: 'Im Partnerwechsel: gewünschte Spiele pro Spieler; sonst Spiele pro Team beziehungsweise Spieler.' },
             strengths: { type: 'array', items: { type: 'integer', minimum: 1, maximum: 3 } }
           },
           required: ['name', 'participants', 'entryType', 'mode', 'courts'],

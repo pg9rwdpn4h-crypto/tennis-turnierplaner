@@ -11,7 +11,7 @@ function planner(saved = null) {
   const startup = source.lastIndexOf("\n  $$('.tab').forEach");
   assert.ok(startup > 0);
   const sandbox = { structuredClone, crypto: webcrypto, localStorage: { getItem: () => JSON.stringify(saved) } };
-  vm.runInNewContext(source.slice(0, startup) + '\n globalThis.planner = { state, generateSingles, generateRoundRobin, limitRounds, generatePartnerMix, scheduleMatches, calculateStandings, calculatePlayerStandings, buildSchedulePdf, rememberParticipants, restoreParticipants }; })();', sandbox);
+  vm.runInNewContext(source.slice(0, startup) + '\n globalThis.planner = { state, generateSingles, generateRoundRobin, limitRounds, generatePartnerMix, partnerMixValidation, scheduleMatches, calculateStandings, calculatePlayerStandings, buildSchedulePdf, rememberParticipants, restoreParticipants }; })();', sandbox);
   return sandbox.planner;
 }
 
@@ -93,12 +93,25 @@ test('fixed doubles and partner rotation retain their planning behavior', () => 
   const teams = ['A', 'B', 'C', 'D', 'E', 'F'];
   const rounds = p.limitRounds(p.generateRoundRobin(teams), 3, teams.length);
   assert.equal(rounds.length, 3); assert.ok(rounds.every(round => round.matches.length === 3));
-  const players = Array.from({ length: 9 }, (_, i) => `P${i}`);
-  const mixed = p.generatePartnerMix(players, 4);
-  assert.equal(mixed.length, 4);
-  for (const round of mixed) {
-    assert.equal(round.matches.length, 2);
-    const active = round.matches.flatMap(m => [...m.playersA, ...m.playersB]);
-    assert.equal(new Set(active).size, 8);
+  for (let playerCount = 4; playerCount <= 20; playerCount++) {
+    const players = Array.from({ length: playerCount }, (_, i) => `P${i}`);
+    for (let games = 1; games <= 12; games++) {
+      const shouldWork = playerCount * games % 4 === 0;
+      assert.equal(p.partnerMixValidation(playerCount, games) === '', shouldWork);
+      if (!shouldWork) {
+        assert.throws(() => p.generatePartnerMix(players, games), /durch 4 teilbar/);
+        continue;
+      }
+      p.state.strengths = players.map(() => 2);
+      const mixed = p.generatePartnerMix(players, games);
+      const counts = Object.fromEntries(players.map(name => [name, 0]));
+      for (const round of mixed) {
+        const active = round.matches.flatMap(m => [...m.playersA, ...m.playersB]);
+        assert.equal(new Set(active).size, active.length);
+        active.forEach(name => counts[name]++);
+      }
+      assert.ok(Object.values(counts).every(count => count === games));
+      assert.equal(mixed.flatMap(round => round.matches).length, playerCount * games / 4);
+    }
   }
 });
