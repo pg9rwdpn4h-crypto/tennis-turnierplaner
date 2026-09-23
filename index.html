@@ -9,7 +9,7 @@
     <meta name="theme-color" content="#2f5fb3" />
     <title>RSV Finningen – Tennis-Turnierplaner</title>
     <link rel="icon" type="image/png" href="logo-rsv-finningen.png" />
-    <link rel="stylesheet" href="styles.css?v=einzel-doppel-1" />
+    <link rel="stylesheet" href="styles.css?v=rundentimer-1" />
   </head>
   <body>
     <header class="topbar">
@@ -123,6 +123,17 @@
           <div><p class="eyebrow">Automatisch geplant</p><h2>Spielplan</h2></div>
           <button class="button button-ghost" id="editSetup" type="button">Einstellungen ändern</button>
         </div>
+        <div class="round-timer is-hidden" id="roundTimer">
+          <div class="timer-copy">
+            <span class="timer-label">Rundentimer</span>
+            <strong class="timer-display" id="timerDisplay" role="timer">20:00</strong>
+            <span class="timer-status" id="timerStatus" aria-live="polite">Bereit</span>
+          </div>
+          <div class="timer-actions">
+            <button class="button button-primary" id="timerToggle" type="button">Starten</button>
+            <button class="button button-ghost" id="timerReset" type="button">Zurücksetzen</button>
+          </div>
+        </div>
         <div class="empty-state" id="scheduleEmpty">
           <div class="empty-ball" aria-hidden="true"></div>
           <h3>Noch kein Spielplan</h3>
@@ -156,6 +167,7 @@
       </form>
     </dialog>
     <footer>Alle Daten bleiben lokal in diesem Browser.</footer>
-    <script src="app.js?v=partnerwechsel-auslastung-1"></script>
+    <script src="app.js?v=rundentimer-1"></script>
   </body>
 </html>
+
