@@ -266,7 +266,8 @@
         active.add(match.teamA); active.add(match.teamB);
         roundMatches.push({ ...match, round: rounds.length + 1 }); matches.splice(i, 1);
       }
-      const byes = players.filter(name => !active.has(name));
+      const activeSet = new Set(active);
+      const byes = players.filter(name => !activeSet.has(name));
       rounds.push({ label: `Runde ${rounds.length + 1}`, note: byes.length ? `Pause: ${byes.join(', ')}` : '', matches: roundMatches });
     }
     return rounds;
@@ -307,50 +308,61 @@
     const partnerCounts = new Map(), opponentCounts = new Map();
     const strengths = Object.fromEntries(players.map((name, index) => [name, clampNumber(state.strengths[index], 1, 3, 2)]));
     const remaining = Object.fromEntries(players.map(name => [name, Number(gamesPerPlayer)]));
-    const unscheduled = [];
-    while (Object.values(remaining).some(Boolean)) {
-      const group = [...players]
-        .filter(name => remaining[name] > 0)
+    const matchCapacity = Math.min(state.courts, Math.floor(players.length / 4));
+    const totalMatches = players.length * Number(gamesPerPlayer) / 4;
+    const roundCount = Math.max(Number(gamesPerPlayer), Math.ceil(totalMatches / matchCapacity));
+    const matchesPerRound = Array.from({ length: roundCount }, (_, index) =>
+      Math.min(matchCapacity, Math.max(0, totalMatches - index * matchCapacity))
+    );
+    const rounds = [];
+    matchesPerRound.forEach((matchCount, roundIndex) => {
+      const active = [...players]
         .map(name => ({ name, remaining: remaining[name], tie: Math.random() }))
         .sort((a, b) => b.remaining - a.remaining || a.tie - b.tie)
-        .slice(0, 4)
+        .slice(0, matchCount * 4)
         .map(item => item.name);
-      if (group.length < 4) throw new Error('Die gewünschte Spielanzahl lässt sich mit diesen Spielern nicht vollständig planen.');
-      group.forEach(name => remaining[name]--);
-      const options = [
-        [[group[0], group[1]], [group[2], group[3]]],
-        [[group[0], group[2]], [group[1], group[3]]],
-        [[group[0], group[3]], [group[1], group[2]]]
-      ];
-      const [playersA, playersB] = options
-        .map(teams => ({ teams, score: mixPairingScore(teams, partnerCounts, opponentCounts, strengths) }))
-        .sort((a, b) => a.score - b.score)[0].teams;
+      if (active.length !== matchCount * 4 || active.some(name => remaining[name] <= 0)) {
+        throw new Error('Die gewünschte Spielanzahl lässt sich mit diesen Spielern und Plätzen nicht vollständig planen.');
+      }
+      active.forEach(name => remaining[name]--);
+      let best = null;
+      for (let attempt = 0; attempt < 160; attempt++) {
+        const ordered = [...active]; shuffle(ordered);
+        const pairings = [];
+        let score = 0;
+        for (let offset = 0; offset < ordered.length; offset += 4) {
+          const group = ordered.slice(offset, offset + 4);
+          const options = [
+            [[group[0], group[1]], [group[2], group[3]]],
+            [[group[0], group[2]], [group[1], group[3]]],
+            [[group[0], group[3]], [group[1], group[2]]]
+          ];
+          const choice = options
+            .map(teams => ({ teams, score: mixPairingScore(teams, partnerCounts, opponentCounts, strengths) }))
+            .sort((a, b) => a.score - b.score)[0];
+          score += choice.score; pairings.push(choice.teams);
+        }
+        if (!best || score < best.score) best = { score, pairings };
+      }
+      const roundNumber = roundIndex + 1;
+      const matches = best.pairings.map(([playersA, playersB]) => {
         incrementCount(partnerCounts, pairKey(...playersA));
         incrementCount(partnerCounts, pairKey(...playersB));
         playersA.forEach(a => playersB.forEach(b => incrementCount(opponentCounts, pairKey(a, b))));
-      unscheduled.push({
-        id: crypto.randomUUID(), teamA: playersA.join(' & '), teamB: playersB.join(' & '),
-        playersA, playersB, phase: 'Partnerwechsel', scoreA: '', scoreB: ''
+        return {
+          id: crypto.randomUUID(), teamA: playersA.join(' & '), teamB: playersB.join(' & '),
+          playersA, playersB, phase: 'Partnerwechsel', round: roundNumber, scoreA: '', scoreB: ''
+        };
       });
-    }
-    const rounds = [];
-    unscheduled.forEach(match => {
-      const participants = [...match.playersA, ...match.playersB];
-      let round = rounds.find(candidate => participants.every(name => !candidate.active.has(name)));
-      if (!round) { round = { active: new Set(), matches: [] }; rounds.push(round); }
-      participants.forEach(name => round.active.add(name));
-      round.matches.push(match);
-    });
-    return rounds.map((round, index) => {
-      const roundNumber = index + 1;
-      const active = round.active;
-      const byes = players.filter(name => !active.has(name));
-      return {
+      const activeSet = new Set(active);
+      const byes = players.filter(name => !activeSet.has(name));
+      rounds.push({
         label: `Runde ${roundNumber}`, phase: 'Partnerwechsel',
         note: byes.length ? `Pause: ${byes.join(', ')}` : '',
-        matches: round.matches.map(match => ({ ...match, round: roundNumber }))
-      };
+        matches
+      });
     });
+    return rounds;
   }
 
   function mixPairingScore([teamA, teamB], partnerCounts, opponentCounts, strengths) {
