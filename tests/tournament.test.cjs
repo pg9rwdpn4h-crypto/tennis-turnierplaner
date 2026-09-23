@@ -112,6 +112,13 @@ test('fixed doubles and partner rotation retain their planning behavior', () => 
       }
       assert.ok(Object.values(counts).every(count => count === games));
       assert.equal(mixed.flatMap(round => round.matches).length, playerCount * games / 4);
+      const capacity = Math.min(p.state.courts, Math.floor(playerCount / 4));
+      const minimumRounds = Math.max(games, Math.ceil(playerCount * games / 4 / capacity));
+      assert.equal(mixed.length, minimumRounds);
+      assert.ok(mixed.every((round, index) => round.matches.length === Math.min(capacity, playerCount * games / 4 - index * capacity)));
     }
   }
+  const ninePlayers = Array.from({ length: 9 }, (_, i) => `N${i}`);
+  p.state.courts = 3; p.state.strengths = ninePlayers.map(() => 2);
+  assert.deepEqual(Array.from(p.generatePartnerMix(ninePlayers, 4), round => round.matches.length), [2, 2, 2, 2, 1]);
 });
