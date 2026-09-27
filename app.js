@@ -10,7 +10,7 @@
     format: 'doubles', entryType: 'teams', pairingMode: 'random', participantDrafts: {},
     participants: ['Team Aufschlag', 'Team Volley', 'Team Grundlinie', 'Team Matchball', 'Team Slice', 'Team Topspin'],
     strengths: [2, 2, 2, 2, 2, 2],
-    teams: [], matches: [], generatedAt: null
+    teams: [], matches: [], generatedAt: null, liveId: null
   };
   let state = loadState();
   let timerRemainingSeconds = state.duration * 60;
@@ -37,6 +37,7 @@
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     const el = $('#saveState');
     el.lastChild.textContent = ' Lokal gespeichert';
+    window.dispatchEvent(new Event('planner-state-changed'));
   }
   function readForm() {
     state.name = $('#tournamentName').value.trim();
@@ -93,10 +94,15 @@
   }
 
   async function confirmPlanChange() {
-    return !state.matches.length || await confirmAction('Beim Wechsel werden der vorhandene Spielplan und alle Ergebnisse gelöscht. Die Teilnehmerlisten bleiben gespeichert. Fortfahren?');
+    if (state.matches.length && !await confirmAction('Beim Wechsel werden der vorhandene Spielplan und alle Ergebnisse gelöscht. Die Teilnehmerlisten bleiben gespeichert. Fortfahren?')) return false;
+    if (state.liveId) {
+      try { await window.plannerLive.revoke(); }
+      catch { alert('Die Live-Freigabe konnte nicht beendet werden. Prüfe die Internetverbindung und versuche es erneut.'); return false; }
+    }
+    return true;
   }
 
-  function clearPlan() { state.matches = []; state.teams = []; state.generatedAt = null; resetRoundTimer(); }
+  function clearPlan() { state.matches = []; state.teams = []; state.generatedAt = null; state.liveId = null; resetRoundTimer(); }
 
   async function setFormat(format) {
     if (format === state.format) return;
@@ -904,8 +910,23 @@
   $('#timerToggle').addEventListener('click', toggleRoundTimer);
   $('#timerReset').addEventListener('click', resetRoundTimer);
   $('#printButton').addEventListener('click', downloadTournamentPdf);
-  $('#resetButton').addEventListener('click', () => {
+  window.plannerLive = {
+    getData: () => ({
+      name: state.name, date: state.date, startTime: state.startTime,
+      courts: state.courts, duration: state.duration, breakDuration: state.breakDuration,
+      format: state.format, mode: state.mode, teams: [...state.teams],
+      matches: structuredClone(state.matches), generatedAt: state.generatedAt
+    }),
+    getId: () => state.liveId,
+    setId: id => { state.liveId = id; saveState(); },
+    hasSchedule: () => state.matches.length > 0
+  };
+  $('#resetButton').addEventListener('click', async () => {
     if (!confirm('Turnier und alle Ergebnisse wirklich zurücksetzen?')) return;
+    if (state.liveId) {
+      try { await window.plannerLive.revoke(); }
+      catch { alert('Die Live-Freigabe konnte nicht beendet werden. Prüfe die Internetverbindung und versuche es erneut.'); return; }
+    }
     localStorage.removeItem(STORAGE_KEY); state = structuredClone(defaults); resetRoundTimer(); hydrateForm(); renderOutputs(); showTab('setup');
   });
 

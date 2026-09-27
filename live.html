@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet" />
+    <meta name="theme-color" content="#2f5fb3" />
+    <title>Live-Ergebnisse – Tennis-Turnierplaner</title>
+    <link rel="icon" type="image/png" href="logo-rsv-finningen.png" />
+    <link rel="stylesheet" href="styles.css?v=live-teilen-1" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="index.html" aria-label="RSV Finningen Tennis-Turnierplaner">
+        <img class="brand-logo" src="logo-rsv-finningen.png" alt="Tennisabteilung RSV Finningen" />
+        <span class="brand-title">Turnierplaner</span>
+      </a>
+      <span class="live-badge">Live-Ergebnisse</span>
+    </header>
+    <main class="app-shell" id="liveViewer">
+      <section class="intro">
+        <div>
+          <p class="eyebrow">Für Teilnehmer</p>
+          <h1 id="liveTitle">Turnier wird geladen</h1>
+          <p class="helper" id="liveMeta"></p>
+        </div>
+      </section>
+      <p class="notice" id="liveViewerStatus" role="status">Verbindung wird hergestellt …</p>
+      <div class="summary-strip is-hidden" id="liveSummary"></div>
+      <section class="live-section is-hidden" id="liveScheduleSection">
+        <h2>Spielplan und Ergebnisse</h2>
+        <div class="schedule-list" id="liveSchedule"></div>
+      </section>
+      <section class="live-section is-hidden" id="liveStandingsSection">
+        <h2>Tabelle</h2>
+        <div id="liveStandings"></div>
+      </section>
+    </main>
+    <footer>Die Anzeige aktualisiert sich automatisch, solange eine Internetverbindung besteht.</footer>
+    <script src="firebase-config.js"></script>
+    <script type="module" src="live-sharing.js?v=live-teilen-1"></script>
+  </body>
+</html>
+
