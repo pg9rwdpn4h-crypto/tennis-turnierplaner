@@ -9,7 +9,7 @@
     <meta name="theme-color" content="#2f5fb3" />
     <title>RSV Finningen – Tennis-Turnierplaner</title>
     <link rel="icon" type="image/png" href="logo-rsv-finningen.png" />
-    <link rel="stylesheet" href="styles.css?v=rundentimer-1" />
+    <link rel="stylesheet" href="styles.css?v=live-teilen-1" />
   </head>
   <body>
     <header class="topbar">
@@ -27,6 +27,7 @@
           <h1 id="pageTitle">Neues Turnier</h1>
         </div>
         <div class="intro-actions">
+          <button class="button button-primary" id="liveShareButton" type="button">Live teilen</button>
           <button class="button button-ghost" id="printButton" type="button">PDF herunterladen</button>
           <button class="button button-danger" id="resetButton" type="button">Zurücksetzen</button>
         </div>
@@ -166,8 +167,36 @@
         </div>
       </form>
     </dialog>
-    <footer>Alle Daten bleiben lokal in diesem Browser.</footer>
-    <script src="app.js?v=rundentimer-1"></script>
+    <dialog id="liveShareDialog" class="confirm-dialog share-dialog" aria-labelledby="liveShareTitle">
+      <div class="share-heading">
+        <h2 id="liveShareTitle">Turnier live teilen</h2>
+        <button class="icon-button" id="liveShareClose" type="button" aria-label="Schließen">×</button>
+      </div>
+      <p>Teilnehmer sehen Spielplan, Ergebnisse und Tabelle. Änderungen erscheinen automatisch.</p>
+      <p class="notice is-hidden" id="liveShareStatus" role="status"></p>
+      <div id="liveShareSetup">
+        <button class="button button-primary" id="liveSignIn" type="button">Mit Google anmelden</button>
+        <p class="helper">Für die Turnierleitung: benedikth14@gmail.com</p>
+        <button class="button button-primary is-hidden" id="livePublish" type="button">Live-Link erstellen</button>
+      </div>
+      <div class="is-hidden" id="liveShareResult">
+        <div class="qr-code" id="liveQr" aria-label="QR-Code zum Turnier"></div>
+        <label class="field">Link für Teilnehmer
+          <input id="liveLink" type="url" readonly />
+        </label>
+        <div class="share-actions">
+          <button class="button button-primary" id="liveCopy" type="button">Link kopieren</button>
+          <button class="button button-ghost" id="liveQrDownload" type="button">QR-Code herunterladen</button>
+          <a class="button button-ghost" id="liveOpen" target="_blank" rel="noopener">Ansicht öffnen</a>
+          <button class="button button-danger" id="liveStop" type="button">Freigabe beenden</button>
+        </div>
+      </div>
+    </dialog>
+    <footer>Turnierdaten bleiben lokal. Live veröffentlichte Spielpläne sind über ihren Link abrufbar.</footer>
+    <script src="app.js?v=live-teilen-1"></script>
+    <script src="firebase-config.js"></script>
+    <script src="qrcode.min.js"></script>
+    <script type="module" src="live-sharing.js?v=live-teilen-1"></script>
   </body>
 </html>
 
