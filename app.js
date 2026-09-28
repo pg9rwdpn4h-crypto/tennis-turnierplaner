@@ -71,6 +71,23 @@
       tournamentId: activeTournamentId, changeSeq: item.changeSeq
     } }));
   }
+  function removeLocalTournament(id) {
+    if (!library.items.some(item => item.id === id)) return false;
+    library.items = library.items.filter(item => item.id !== id);
+    localStorage.removeItem(TOURNAMENT_KEY(id));
+    localStorage.removeItem(STORAGE_KEY);
+    if (!library.items.length) {
+      const freshId = crypto.randomUUID();
+      const fresh = { ...structuredClone(defaults), date: today };
+      localStorage.setItem(TOURNAMENT_KEY(freshId), JSON.stringify(fresh));
+      library.items.push({ id: freshId, name: fresh.name, date: fresh.date,
+        updatedAt: Date.now(), dirty: false, changeSeq: 0, remoteVersion: 0,
+        hasSchedule: false, placeholder: true });
+    }
+    if (activeTournamentId === id) activateTournament(library.items[0].id);
+    else saveLibrary();
+    return true;
+  }
   function readForm() {
     state.name = $('#tournamentName').value.trim();
     state.date = $('#tournamentDate').value;
@@ -1009,6 +1026,7 @@
         hasSchedule: !!source.matches?.length });
       saveLibrary(); return copyId;
     },
+    removeLocal: removeLocalTournament,
     markSynced: (id, version, changeSeq) => {
       const item = library.items.find(item => item.id === id);
       if (!item) return;

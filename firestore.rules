@@ -3,7 +3,8 @@ service cloud.firestore {
   match /databases/{database}/documents {
     match /tournaments/{tournamentId} {
       // The unguessable tournament ID is shared by link or QR code.
-      allow get: if resource.data.published == true;
+      allow get: if resource.data.published == true
+        || (organizer() && resource.data.ownerUid == request.auth.uid);
       allow list: if false;
 
       // Only the tournament organizer's verified Google account may write.
@@ -42,7 +43,7 @@ service cloud.firestore {
         && resource.data.ownerUid == request.auth.uid
         && request.resource.data.ownerUid == resource.data.ownerUid
         && validTournament();
-      allow delete: if false;
+      allow delete: if organizer() && resource.data.ownerUid == request.auth.uid;
     }
 
     match /organizers/{organizerUid}/tournaments/{tournamentId} {
@@ -72,7 +73,7 @@ service cloud.firestore {
       allow update: if organizer() && validSavedTournament()
         && resource.data.ownerUid == organizerUid
         && request.resource.data.version == resource.data.version + 1;
-      allow delete: if false;
+      allow delete: if organizer() && resource.data.ownerUid == organizerUid;
     }
   }
 }

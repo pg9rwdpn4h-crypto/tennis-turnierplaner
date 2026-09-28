@@ -14,6 +14,9 @@ let remoteVersions = new Map();
 let remoteStates = new Map();
 const timers = new Map();
 const writing = new Set();
+const pendingWrites = new Map();
+const deleting = new Set();
+const deletedIds = new Set();
 const conflicts = new Set();
 
 function setMessage(message, error = false) {
@@ -38,7 +41,15 @@ function render() {
     open.textContent = item.id === store.activeId() ? 'Geöffnet' : 'Öffnen';
     open.disabled = item.id === store.activeId();
     open.addEventListener('click', () => { store.open(item.id); dialog.close(); render(); });
-    card.append(info, open);
+    const actions = document.createElement('div'); actions.className = 'tournament-actions';
+    actions.append(open); card.append(info, actions);
+    const remove = document.createElement('button');
+    remove.className = 'button button-danger'; remove.type = 'button';
+    remove.textContent = deleting.has(item.id) ? 'Wird gelöscht …' : 'Löschen';
+    remove.setAttribute('aria-label', `Turnier ${item.name || 'ohne Namen'} löschen`);
+    remove.disabled = deleting.has(item.id);
+    remove.addEventListener('click', () => { void deleteTournament(item.id); });
+    actions.append(remove);
     if (conflicts.has(item.id) && remoteStates.has(item.id)) {
       const resolve = document.createElement('button');
       resolve.className = 'button button-ghost'; resolve.type = 'button';
@@ -52,20 +63,21 @@ function render() {
         setMessage('Die lokale Version wurde als eigenes Turnier behalten. Die Online-Version ist wieder geöffnet.');
         render();
       });
-      card.append(resolve);
+      actions.append(resolve);
     }
     list.append(card);
   }
 }
 
 function schedule(id) {
+  if (deleting.has(id)) return;
   clearTimeout(timers.get(id));
   timers.set(id, setTimeout(() => { timers.delete(id); void syncOne(id); }, 600));
 }
 
 async function syncOne(id) {
   const item = store.list().find(entry => entry.id === id);
-  if (!item?.dirty || !currentUser || writing.has(id) || conflicts.has(id)) return;
+  if (!item?.dirty || !currentUser || writing.has(id) || conflicts.has(id) || deleting.has(id)) return;
   if (remoteVersions.has(id) && remoteVersions.get(id) !== item.remoteVersion) {
     conflicts.add(id); render();
     setMessage('Ein Turnier wurde auf einem anderen Gerät geändert. Deine lokale Version bleibt erhalten; bitte prüfe den Konflikt.', true);
@@ -74,6 +86,8 @@ async function syncOne(id) {
   const state = store.localState(id);
   if (!state) return;
   writing.add(id);
+  let writeFinished;
+  pendingWrites.set(id, new Promise(resolve => { writeFinished = resolve; }));
   try {
     const reference = firestore.doc(database, 'organizers', currentUser.uid, 'tournaments', id);
     const version = await firestore.runTransaction(database, async transaction => {
@@ -99,9 +113,56 @@ async function syncOne(id) {
       setMessage('Online-Speicherung fehlgeschlagen. Deine Änderungen bleiben in diesem Browser erhalten.', true);
     }
   } finally {
-    writing.delete(id); render();
+    writing.delete(id); pendingWrites.delete(id); writeFinished(); render();
     const latest = store.list().find(entry => entry.id === id);
-    if (latest?.dirty && !conflicts.has(id) && latest.changeSeq !== item.changeSeq) schedule(id);
+    if (latest?.dirty && !conflicts.has(id) && !deleting.has(id) && latest.changeSeq !== item.changeSeq) schedule(id);
+  }
+}
+
+async function deleteTournament(id) {
+  const item = store.list().find(entry => entry.id === id);
+  if (!item || deleting.has(id)) return;
+  const local = store.localState(id);
+  const live = !!local?.liveId;
+  const message = `„${item.name || 'Dieses Turnier'}“ dauerhaft löschen? Spielplan und Ergebnisse werden entfernt.${live ? ' Der Live-Link und QR-Code funktionieren danach nicht mehr.' : ''}`;
+  if (!confirm(message)) return;
+  if (conflicts.has(id)) {
+    setMessage('Dieses Turnier hat einen Speicherkonflikt. Bitte zuerst die lokale Kopie behalten und die Online-Version laden.', true);
+    return;
+  }
+  if (!currentUser && (item.remoteVersion || live)) {
+    setMessage('Zum Löschen dieses online gespeicherten oder live geteilten Turniers bitte zuerst mit Google anmelden.', true);
+    return;
+  }
+  deleting.add(id); clearTimeout(timers.get(id)); timers.delete(id); render();
+  try {
+    await pendingWrites.get(id);
+    const latest = store.list().find(entry => entry.id === id);
+    const latestLiveId = store.localState(id)?.liveId;
+    if (currentUser) {
+      const privateRef = firestore.doc(database, 'organizers', currentUser.uid, 'tournaments', id);
+      const publicRef = latestLiveId ? firestore.doc(database, 'tournaments', latestLiveId) : null;
+      await firestore.runTransaction(database, async transaction => {
+        const saved = await transaction.get(privateRef);
+        const published = publicRef ? await transaction.get(publicRef) : null;
+        if (saved.exists() && saved.data().version !== latest.remoteVersion) throw new Error('conflict');
+        if (!saved.exists() && latest.remoteVersion) throw new Error('conflict');
+        if (published?.exists() && published.data().ownerUid !== currentUser.uid) throw new Error('owner');
+        if (published?.exists()) transaction.delete(publicRef);
+        if (saved.exists()) transaction.delete(privateRef);
+      });
+    }
+    deletedIds.add(id);
+    remoteVersions.delete(id); remoteStates.delete(id); conflicts.delete(id);
+    store.removeLocal(id);
+    setMessage('Turnier gelöscht. Falls es live geteilt war, ist auch der Teilnehmer-Link beendet.');
+  } catch (error) {
+    if (error.message === 'conflict') conflicts.add(id);
+    setMessage(error.message === 'conflict'
+      ? 'Das Turnier wurde anderswo geändert. Es wurde nicht gelöscht; bitte den Konflikt zuerst prüfen.'
+      : 'Turnier konnte nicht gelöscht werden. Prüfe die Verbindung und versuche es erneut.', true);
+  } finally {
+    deleting.delete(id); render();
   }
 }
 
@@ -110,7 +171,10 @@ function subscribe() {
   if (!currentUser) { render(); return; }
   const collection = firestore.collection(database, 'organizers', currentUser.uid, 'tournaments');
   unsubscribe = firestore.onSnapshot(collection, snapshot => {
+    const presentIds = new Set(snapshot.docs.map(document => document.id));
+    for (const id of deletedIds) if (!presentIds.has(id)) deletedIds.delete(id);
     for (const document of snapshot.docs) {
+      if (deletedIds.has(document.id)) continue;
       const remote = document.data();
       remoteStates.set(document.id, { state: remote.state, version: remote.version });
       const local = store.list().find(item => item.id === document.id);

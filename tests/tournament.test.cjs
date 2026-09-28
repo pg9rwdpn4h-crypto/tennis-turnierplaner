@@ -13,9 +13,10 @@ function planner(saved = null) {
   const storage = new Map(saved ? [['courtpilot-tournament-v1', JSON.stringify(saved)]] : []);
   const sandbox = { structuredClone, crypto: webcrypto, localStorage: {
     getItem: key => storage.get(key) ?? null,
-    setItem: (key, value) => storage.set(key, value)
+    setItem: (key, value) => storage.set(key, value),
+    removeItem: key => storage.delete(key)
   } };
-  vm.runInNewContext(source.slice(0, startup) + '\n globalThis.planner = { state, library, activeTournamentId, loadState, generateSingles, generateRoundRobin, limitRounds, generatePartnerMix, partnerMixValidation, scheduleMatches, calculateStandings, calculatePlayerStandings, buildSchedulePdf, rememberParticipants, restoreParticipants, formatCountdown, countdownRemaining }; })();', sandbox);
+  vm.runInNewContext(source.slice(0, startup) + '\n function activateTournament(id) { activeTournamentId = id; library.activeId = id; saveLibrary(); } globalThis.planner = { state, library, activeTournamentId, loadState, removeLocalTournament, generateSingles, generateRoundRobin, limitRounds, generatePartnerMix, partnerMixValidation, scheduleMatches, calculateStandings, calculatePlayerStandings, buildSchedulePdf, rememberParticipants, restoreParticipants, formatCountdown, countdownRemaining }; })();', sandbox);
   sandbox.planner.storage = storage;
   return sandbox.planner;
 }
@@ -26,6 +27,17 @@ test('existing single tournament is migrated into a separate saved tournament', 
   assert.equal(p.library.items[0].name, 'Sommer-Cup');
   assert.equal(p.library.items[0].hasSchedule, true);
   assert.equal(p.loadState(p.activeTournamentId).matches[0].scoreA, 6);
+});
+
+test('deleting a saved tournament removes its local data and preserves a usable empty planner', () => {
+  const p = planner({ name: 'Altes Turnier', participants: ['A', 'B'], matches: [{ scoreA: 6, scoreB: 4 }] });
+  const oldId = p.activeTournamentId;
+  assert.equal(p.removeLocalTournament(oldId), true);
+  assert.equal(p.storage.has(`courtpilot-tournament-${oldId}`), false);
+  assert.equal(p.storage.has('courtpilot-tournament-v1'), false);
+  assert.equal(p.library.items.length, 1);
+  assert.notEqual(p.library.items[0].id, oldId);
+  assert.deepEqual(JSON.parse(p.storage.get(`courtpilot-tournament-${p.library.items[0].id}`)).matches, []);
 });
 
 test('round timer formats the duration and compensates for delayed updates', () => {
