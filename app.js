@@ -35,7 +35,8 @@
     try { if (previous) legacy = JSON.parse(previous); } catch { /* Keep a recoverable empty tournament. */ }
     const created = { activeId: id, items: [{ id, name: legacy.name || defaults.name,
       date: legacy.date || today, updatedAt: Date.now(), dirty: !!previous,
-      changeSeq: previous ? 1 : 0, remoteVersion: 0, hasSchedule: !!legacy.matches?.length }] };
+      changeSeq: previous ? 1 : 0, remoteVersion: 0, hasSchedule: !!legacy.matches?.length,
+      placeholder: !previous }] };
     localStorage.setItem(LIBRARY_KEY, JSON.stringify(created));
     return created;
   }
@@ -62,7 +63,7 @@
     const item = library.items.find(item => item.id === activeTournamentId);
     item.name = state.name || 'Neues Turnier'; item.date = state.date;
     item.hasSchedule = state.matches.length > 0;
-    if (notify) { item.updatedAt = Date.now(); item.changeSeq++; item.dirty = true; }
+    if (notify) { item.updatedAt = Date.now(); item.changeSeq++; item.dirty = true; item.placeholder = false; }
     saveLibrary();
     const el = $('#saveState');
     el.lastChild.textContent = notify ? ' Lokal gespeichert · Online-Speicherung ausstehend' : ' Lokal gespeichert';
@@ -988,7 +989,12 @@
       localStorage.setItem(TOURNAMENT_KEY(id), JSON.stringify(clean));
       item.name = clean.name; item.date = clean.date; item.hasSchedule = clean.matches.length > 0;
       item.remoteVersion = version; item.updatedAt = Date.now(); item.dirty = false; saveLibrary();
-      if (id === activeTournamentId) activateTournament(id);
+      const empty = library.items.find(entry => entry.id === activeTournamentId && entry.placeholder && !entry.dirty);
+      if (empty && empty.id !== id) {
+        library.items = library.items.filter(entry => entry.id !== empty.id);
+        localStorage.removeItem(TOURNAMENT_KEY(empty.id));
+        activateTournament(id);
+      } else if (id === activeTournamentId) activateTournament(id);
       return true;
     },
     duplicateLocal: id => {

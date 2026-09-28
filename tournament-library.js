@@ -139,6 +139,7 @@ document.querySelector('#tournamentNew').addEventListener('click', () => {
 });
 window.addEventListener('planner-state-changed', event => {
   if (currentUser) schedule(event.detail.tournamentId);
+  else store.setStatus('Lokal gespeichert · für Online-Speicherung anmelden');
   render();
 });
 window.addEventListener('online', () => {
