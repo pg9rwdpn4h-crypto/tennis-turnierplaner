@@ -45,11 +45,11 @@ async function start() {
   }
 
   const version = '12.19.0';
-  const [{ initializeApp }, firestore] = await Promise.all([
+  const [{ initializeApp, getApps, getApp }, firestore] = await Promise.all([
     import(`https://www.gstatic.com/firebasejs/${version}/firebase-app.js`),
     import(`https://www.gstatic.com/firebasejs/${version}/firebase-firestore.js`)
   ]);
-  const app = initializeApp(config);
+  const app = getApps().length ? getApp() : initializeApp(config);
   const db = firestore.getFirestore(app);
 
   if (viewer) {
@@ -228,6 +228,7 @@ function startOrganizer(authApi, firestore, app, db) {
       scheduleSync();
     }
   });
+  window.addEventListener('planner-tournament-changed', refresh);
 }
 
 function calculateRows(data) {

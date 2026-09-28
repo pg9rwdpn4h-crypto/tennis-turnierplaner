@@ -10,10 +10,23 @@ function planner(saved = null) {
   const source = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
   const startup = source.lastIndexOf("\n  $$('.tab').forEach");
   assert.ok(startup > 0);
-  const sandbox = { structuredClone, crypto: webcrypto, localStorage: { getItem: () => JSON.stringify(saved) } };
-  vm.runInNewContext(source.slice(0, startup) + '\n globalThis.planner = { state, generateSingles, generateRoundRobin, limitRounds, generatePartnerMix, partnerMixValidation, scheduleMatches, calculateStandings, calculatePlayerStandings, buildSchedulePdf, rememberParticipants, restoreParticipants, formatCountdown, countdownRemaining }; })();', sandbox);
+  const storage = new Map(saved ? [['courtpilot-tournament-v1', JSON.stringify(saved)]] : []);
+  const sandbox = { structuredClone, crypto: webcrypto, localStorage: {
+    getItem: key => storage.get(key) ?? null,
+    setItem: (key, value) => storage.set(key, value)
+  } };
+  vm.runInNewContext(source.slice(0, startup) + '\n globalThis.planner = { state, library, activeTournamentId, loadState, generateSingles, generateRoundRobin, limitRounds, generatePartnerMix, partnerMixValidation, scheduleMatches, calculateStandings, calculatePlayerStandings, buildSchedulePdf, rememberParticipants, restoreParticipants, formatCountdown, countdownRemaining }; })();', sandbox);
+  sandbox.planner.storage = storage;
   return sandbox.planner;
 }
+
+test('existing single tournament is migrated into a separate saved tournament', () => {
+  const p = planner({ name: 'Sommer-Cup', date: '2026-08-01', matches: [{ scoreA: 6, scoreB: 4 }], participants: ['A', 'B'] });
+  assert.equal(p.library.items.length, 1);
+  assert.equal(p.library.items[0].name, 'Sommer-Cup');
+  assert.equal(p.library.items[0].hasSchedule, true);
+  assert.equal(p.loadState(p.activeTournamentId).matches[0].scoreA, 6);
+});
 
 test('round timer formats the duration and compensates for delayed updates', () => {
   const p = planner();

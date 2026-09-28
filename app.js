@@ -1,5 +1,7 @@
 (() => {
   const STORAGE_KEY = 'courtpilot-tournament-v1';
+  const LIBRARY_KEY = 'courtpilot-tournaments-v2';
+  const TOURNAMENT_KEY = id => `courtpilot-tournament-${id}`;
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
   const today = new Date().toISOString().slice(0, 10);
@@ -12,16 +14,33 @@
     strengths: [2, 2, 2, 2, 2, 2],
     teams: [], matches: [], generatedAt: null, liveId: null
   };
-  let state = loadState();
+  const library = loadLibrary();
+  let activeTournamentId = library.activeId;
+  let state = loadState(activeTournamentId);
   let timerRemainingSeconds = state.duration * 60;
   let timerEndAt = null;
   let timerInterval = null;
   let timerFinished = false;
   let audioContext = null;
 
-  function loadState() {
+  function loadLibrary() {
     try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+      const saved = JSON.parse(localStorage.getItem(LIBRARY_KEY));
+      if (saved?.activeId && Array.isArray(saved.items) && saved.items.some(item => item.id === saved.activeId)) return saved;
+    } catch { /* Recover the previous single tournament below. */ }
+    const id = crypto.randomUUID();
+    const previous = localStorage.getItem(STORAGE_KEY);
+    if (previous) localStorage.setItem(TOURNAMENT_KEY(id), previous);
+    let legacy = defaults;
+    try { if (previous) legacy = JSON.parse(previous); } catch { /* Keep a recoverable empty tournament. */ }
+    const created = { activeId: id, items: [{ id, name: legacy.name || defaults.name,
+      date: legacy.date || today, updatedAt: Date.now(), dirty: !!previous,
+      changeSeq: previous ? 1 : 0, remoteVersion: 0, hasSchedule: !!legacy.matches?.length }] };
+    localStorage.setItem(LIBRARY_KEY, JSON.stringify(created));
+    return created;
+  }
+  function normalizeState(saved) {
+    try {
       const merged = saved ? { ...defaults, ...saved } : structuredClone(defaults);
       merged.participantDrafts = { ...(saved?.participantDrafts || {}) };
       merged.format = merged.format === 'singles' ? 'singles' : 'doubles';
@@ -33,11 +52,23 @@
       return merged;
     } catch { return structuredClone(defaults); }
   }
-  function saveState() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  function loadState(id) {
+    try { return normalizeState(JSON.parse(localStorage.getItem(TOURNAMENT_KEY(id)))); }
+    catch { return structuredClone(defaults); }
+  }
+  function saveLibrary() { localStorage.setItem(LIBRARY_KEY, JSON.stringify(library)); }
+  function saveState(notify = true) {
+    localStorage.setItem(TOURNAMENT_KEY(activeTournamentId), JSON.stringify(state));
+    const item = library.items.find(item => item.id === activeTournamentId);
+    item.name = state.name || 'Neues Turnier'; item.date = state.date;
+    item.hasSchedule = state.matches.length > 0;
+    if (notify) { item.updatedAt = Date.now(); item.changeSeq++; item.dirty = true; }
+    saveLibrary();
     const el = $('#saveState');
-    el.lastChild.textContent = ' Lokal gespeichert';
-    window.dispatchEvent(new Event('planner-state-changed'));
+    el.lastChild.textContent = notify ? ' Lokal gespeichert · Online-Speicherung ausstehend' : ' Lokal gespeichert';
+    if (notify) window.dispatchEvent(new CustomEvent('planner-state-changed', { detail: {
+      tournamentId: activeTournamentId, changeSeq: item.changeSeq
+    } }));
   }
   function readForm() {
     state.name = $('#tournamentName').value.trim();
@@ -921,15 +952,77 @@
     setId: id => { state.liveId = id; saveState(); },
     hasSchedule: () => state.matches.length > 0
   };
+  function activateTournament(id) {
+    const item = library.items.find(item => item.id === id);
+    if (!item) return false;
+    activeTournamentId = id; library.activeId = id; saveLibrary();
+    state = loadState(id); resetRoundTimer(); hydrateForm(); renderOutputs();
+    showTab(state.matches.length ? 'schedule' : 'setup'); updateTitle();
+    $('#saveState').lastChild.textContent = item.dirty ? ' Lokal gespeichert · Online-Speicherung ausstehend'
+      : item.remoteVersion ? ' Online gespeichert' : ' Lokal gespeichert';
+    window.dispatchEvent(new CustomEvent('planner-tournament-changed', { detail: { tournamentId: id } }));
+    return true;
+  }
+  window.plannerStore = {
+    list: () => structuredClone(library.items),
+    activeId: () => activeTournamentId,
+    localState: id => { try { return JSON.parse(localStorage.getItem(TOURNAMENT_KEY(id))); } catch { return null; } },
+    create: () => {
+      const id = crypto.randomUUID();
+      library.items.unshift({ id, name: defaults.name, date: today, updatedAt: Date.now(),
+        dirty: true, changeSeq: 1, remoteVersion: 0, hasSchedule: false });
+      localStorage.setItem(TOURNAMENT_KEY(id), JSON.stringify({ ...defaults, date: today }));
+      activateTournament(id); return id;
+    },
+    open: activateTournament,
+    importRemote: (id, remoteState, version, force = false) => {
+      let item = library.items.find(item => item.id === id);
+      if (item?.dirty && !force) return false;
+      if (!item) {
+        item = { id, name: '', date: '', updatedAt: Date.now(), dirty: false,
+          changeSeq: 0, remoteVersion: 0, hasSchedule: false };
+        library.items.push(item);
+      }
+      if (!force && version <= item.remoteVersion) return true;
+      const clean = normalizeState(remoteState);
+      localStorage.setItem(TOURNAMENT_KEY(id), JSON.stringify(clean));
+      item.name = clean.name; item.date = clean.date; item.hasSchedule = clean.matches.length > 0;
+      item.remoteVersion = version; item.updatedAt = Date.now(); item.dirty = false; saveLibrary();
+      if (id === activeTournamentId) activateTournament(id);
+      return true;
+    },
+    duplicateLocal: id => {
+      const source = window.plannerStore.localState(id);
+      if (!source) return null;
+      const copyId = crypto.randomUUID();
+      source.name = `${source.name || 'Turnier'} (lokale Kopie)`;
+      source.liveId = null;
+      localStorage.setItem(TOURNAMENT_KEY(copyId), JSON.stringify(source));
+      library.items.unshift({ id: copyId, name: source.name, date: source.date,
+        updatedAt: Date.now(), dirty: true, changeSeq: 1, remoteVersion: 0,
+        hasSchedule: !!source.matches?.length });
+      saveLibrary(); return copyId;
+    },
+    markSynced: (id, version, changeSeq) => {
+      const item = library.items.find(item => item.id === id);
+      if (!item) return;
+      item.remoteVersion = version;
+      if (item.changeSeq === changeSeq) item.dirty = false;
+      saveLibrary();
+      if (id === activeTournamentId && !item.dirty) $('#saveState').lastChild.textContent = ' Online gespeichert';
+    },
+    setStatus: message => { $('#saveState').lastChild.textContent = ` ${message}`; }
+  };
   $('#resetButton').addEventListener('click', async () => {
     if (!confirm('Turnier und alle Ergebnisse wirklich zurücksetzen?')) return;
     if (state.liveId) {
       try { await window.plannerLive.revoke(); }
       catch { alert('Die Live-Freigabe konnte nicht beendet werden. Prüfe die Internetverbindung und versuche es erneut.'); return; }
     }
-    localStorage.removeItem(STORAGE_KEY); state = structuredClone(defaults); resetRoundTimer(); hydrateForm(); renderOutputs(); showTab('setup');
+    state = { ...structuredClone(defaults), date: today }; resetRoundTimer(); hydrateForm();
+    renderOutputs(); showTab('setup'); saveState();
   });
 
-  hydrateForm(); renderOutputs(); saveState(); registerWebMcp();
+  hydrateForm(); renderOutputs(); saveState(false); registerWebMcp();
 })();
 
