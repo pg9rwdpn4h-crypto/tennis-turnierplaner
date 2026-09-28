@@ -44,6 +44,36 @@ service cloud.firestore {
         && validTournament();
       allow delete: if false;
     }
+
+    match /organizers/{organizerUid}/tournaments/{tournamentId} {
+      function organizer() {
+        return request.auth != null
+          && request.auth.uid == organizerUid
+          && request.auth.token.email == 'benedikth14@gmail.com'
+          && request.auth.token.email_verified == true
+          && request.auth.token.firebase.sign_in_provider == 'google.com';
+      }
+
+      function validSavedTournament() {
+        return request.resource.data.keys().hasOnly(['ownerUid', 'version', 'state', 'updatedAt'])
+          && request.resource.data.ownerUid == organizerUid
+          && request.resource.data.version is int
+          && request.resource.data.state is map
+          && request.resource.data.state.name is string
+          && request.resource.data.state.name.size() <= 80
+          && request.resource.data.state.matches is list
+          && request.resource.data.state.matches.size() <= 2000
+          && request.resource.data.updatedAt == request.time;
+      }
+
+      allow get, list: if organizer();
+      allow create: if organizer() && validSavedTournament()
+        && request.resource.data.version == 1;
+      allow update: if organizer() && validSavedTournament()
+        && resource.data.ownerUid == organizerUid
+        && request.resource.data.version == resource.data.version + 1;
+      allow delete: if false;
+    }
   }
 }
 

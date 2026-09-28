@@ -9,7 +9,7 @@
     <meta name="theme-color" content="#2f5fb3" />
     <title>RSV Finningen – Tennis-Turnierplaner</title>
     <link rel="icon" type="image/png" href="logo-rsv-finningen.png" />
-    <link rel="stylesheet" href="styles.css?v=live-teilen-1" />
+    <link rel="stylesheet" href="styles.css?v=meine-turniere-1" />
   </head>
   <body>
     <header class="topbar">
@@ -27,6 +27,7 @@
           <h1 id="pageTitle">Neues Turnier</h1>
         </div>
         <div class="intro-actions">
+          <button class="button button-ghost" id="tournamentLibraryButton" type="button">Meine Turniere</button>
           <button class="button button-primary" id="liveShareButton" type="button">Live teilen</button>
           <button class="button button-ghost" id="printButton" type="button">PDF herunterladen</button>
           <button class="button button-danger" id="resetButton" type="button">Zurücksetzen</button>
@@ -192,11 +193,23 @@
         </div>
       </div>
     </dialog>
-    <footer>Turnierdaten bleiben lokal. Live veröffentlichte Spielpläne sind über ihren Link abrufbar.</footer>
-    <script src="app.js?v=live-teilen-1"></script>
+    <dialog id="tournamentLibraryDialog" class="confirm-dialog library-dialog" aria-labelledby="tournamentLibraryTitle">
+      <div class="share-heading">
+        <h2 id="tournamentLibraryTitle">Meine Turniere</h2>
+        <button class="icon-button" id="tournamentLibraryClose" type="button" aria-label="Schließen">×</button>
+      </div>
+      <p>Öffne einen Spielplan oder lege ein weiteres Turnier an. Mit Google-Anmeldung sind deine Turniere auch auf anderen Geräten verfügbar.</p>
+      <p class="notice" id="tournamentLibraryStatus" role="status">Turniere werden geladen …</p>
+      <button class="button button-ghost" id="tournamentSignIn" type="button">Mit Google anmelden</button>
+      <div class="tournament-list" id="tournamentLibraryList"></div>
+      <button class="button button-primary" id="tournamentNew" type="button">Neues Turnier anlegen</button>
+    </dialog>
+    <footer>Turniere werden lokal gespeichert und nach Anmeldung privat synchronisiert. Live veröffentlichte Spielpläne sind über ihren Link abrufbar.</footer>
+    <script src="app.js?v=meine-turniere-1"></script>
     <script src="firebase-config.js"></script>
     <script src="qrcode.min.js"></script>
-    <script type="module" src="live-sharing.js?v=live-teilen-1"></script>
+    <script type="module" src="live-sharing.js?v=meine-turniere-1"></script>
+    <script type="module" src="tournament-library.js?v=meine-turniere-1"></script>
   </body>
 </html>
 
