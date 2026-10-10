@@ -363,10 +363,16 @@
     return '';
   }
 
-  function generatePartnerMix(players, gamesPerPlayer) {
+  function generatePartnerMix(players, gamesPerPlayer, history = []) {
     const validationError = partnerMixValidation(players.length, Number(gamesPerPlayer));
     if (validationError) throw new Error(validationError);
     const partnerCounts = new Map(), opponentCounts = new Map();
+    history.forEach(match => {
+      if (!match.playersA || !match.playersB) return;
+      incrementCount(partnerCounts, pairKey(...match.playersA));
+      incrementCount(partnerCounts, pairKey(...match.playersB));
+      match.playersA.forEach(a => match.playersB.forEach(b => incrementCount(opponentCounts, pairKey(a, b))));
+    });
     const strengths = Object.fromEntries(players.map((name, index) => [name, clampNumber(state.strengths[index], 1, 3, 2)]));
     const remaining = Object.fromEntries(players.map(name => [name, Number(gamesPerPlayer)]));
     const matchCapacity = Math.min(state.courts, Math.floor(players.length / 4));
@@ -456,6 +462,51 @@
     ];
   }
 
+  function additionalRoundError() {
+    if (!state.matches.length) return 'Erstelle zuerst einen Spielplan.';
+    if (state.mode === 'partnerMix') {
+      if (state.teams.length < 4 || state.teams.length % 4) return 'Genau ein weiteres Spiel pro Spieler ist beim Partnerwechsel nur mit einer durch 4 teilbaren Spielerzahl möglich.';
+    } else if (state.teams.length < 2 || state.teams.length % 2) {
+      return `Genau ein weiteres Spiel pro ${state.format === 'singles' ? 'Spieler' : 'Team'} ist nur bei gerader ${state.format === 'singles' ? 'Spielerzahl' : 'Teamzahl'} möglich.`;
+    }
+    return '';
+  }
+
+  function appendTournamentRound() {
+    const error = additionalRoundError();
+    if (error) throw new Error(error);
+    // Use the scheduled roster, even if the preparation form has since changed.
+    let rounds;
+    if (state.mode === 'partnerMix') {
+      rounds = generatePartnerMix(state.teams, 1, state.matches);
+    } else {
+      const encounters = new Map();
+      state.matches.forEach(match => incrementCount(encounters, pairKey(match.teamA, match.teamB)));
+      // Choose the least repeated complete pairing from a randomized round robin.
+      const pool = [...state.teams]; shuffle(pool);
+      rounds = [generateRoundRobin(pool).map(round => ({
+        round, repeats: round.matches.reduce((sum, match) => sum + (encounters.get(pairKey(match.teamA, match.teamB)) || 0), 0)
+      })).sort((a, b) => a.repeats - b.repeats)[0].round];
+    }
+    const number = Math.max(...state.matches.map(match => Number(match.round) || 0)) + 1;
+    const firstSlot = Math.max(...state.matches.map(match => match.slot)) + 1;
+    rounds.forEach(round => {
+      round.label = `Runde ${number}`;
+      round.matches.forEach(match => { match.round = number; });
+    });
+    const added = scheduleMatches(rounds).map(match => ({ ...match, slot: match.slot + firstSlot }));
+    state.matches.push(...added);
+    return added;
+  }
+
+  function addTournamentRound() {
+    try {
+      const added = appendTournamentRound();
+      saveState(); renderOutputs();
+      $('#additionalRoundHint').textContent = `Runde hinzugefügt: ${added.length} neue Spiele. Jeder Teilnehmer hat ein weiteres Spiel.`;
+    } catch (error) { $('#additionalRoundHint').textContent = error.message; }
+  }
+
   function scheduleMatches(rounds) {
     let slot = 0; const output = [];
     rounds.forEach(round => {
@@ -474,6 +525,9 @@
     $('#standingsEmpty').classList.toggle('is-hidden', hasMatches);
     $('#scheduleSummary').classList.toggle('is-hidden', !hasMatches);
     $('#roundTimer').classList.toggle('is-hidden', !hasMatches);
+    $('#additionalRoundActions').classList.toggle('is-hidden', !hasMatches);
+    $('#addRoundButton').disabled = !!additionalRoundError();
+    $('#additionalRoundHint').textContent = additionalRoundError() || 'Ein weiteres Spiel für jeden Teilnehmer. Rückspiele sind möglich; bei Bedarf entstehen mehrere Zeitblöcke.';
     renderRoundTimer();
     renderSchedule(); renderStandings();
   }
@@ -956,6 +1010,7 @@
   $('#addParticipant').addEventListener('click', () => { state.participants.push(''); state.strengths.push(2); renderParticipants(); saveState(); updateSetupSummary(); $$('.participant-row input').at(-1).focus(); });
   $('#generateButton').addEventListener('click', createTournament);
   $('#editSetup').addEventListener('click', () => showTab('setup'));
+  $('#addRoundButton').addEventListener('click', addTournamentRound);
   $('#timerToggle').addEventListener('click', toggleRoundTimer);
   $('#timerReset').addEventListener('click', resetRoundTimer);
   $('#printButton').addEventListener('click', downloadTournamentPdf);

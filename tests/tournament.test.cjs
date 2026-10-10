@@ -16,7 +16,7 @@ function planner(saved = null) {
     setItem: (key, value) => storage.set(key, value),
     removeItem: key => storage.delete(key)
   } };
-  vm.runInNewContext(source.slice(0, startup) + '\n function activateTournament(id) { activeTournamentId = id; library.activeId = id; saveLibrary(); } globalThis.planner = { state, library, activeTournamentId, loadState, removeLocalTournament, generateSingles, generateRoundRobin, limitRounds, generatePartnerMix, partnerMixValidation, scheduleMatches, calculateStandings, calculatePlayerStandings, buildSchedulePdf, rememberParticipants, restoreParticipants, formatCountdown, countdownRemaining }; })();', sandbox);
+  vm.runInNewContext(source.slice(0, startup) + '\n function activateTournament(id) { activeTournamentId = id; library.activeId = id; saveLibrary(); } globalThis.planner = { state, library, activeTournamentId, appendTournamentRound, additionalRoundError, loadState, removeLocalTournament, generateSingles, generateRoundRobin, limitRounds, generatePartnerMix, partnerMixValidation, scheduleMatches, calculateStandings, calculatePlayerStandings, buildSchedulePdf, rememberParticipants, restoreParticipants, formatCountdown, countdownRemaining }; })();', sandbox);
   sandbox.planner.storage = storage;
   return sandbox.planner;
 }
@@ -27,6 +27,61 @@ test('existing single tournament is migrated into a separate saved tournament', 
   assert.equal(p.library.items[0].name, 'Sommer-Cup');
   assert.equal(p.library.items[0].hasSchedule, true);
   assert.equal(p.loadState(p.activeTournamentId).matches[0].scoreA, 6);
+});
+
+test('additional rounds preserve existing games and give every scheduled participant exactly one game', () => {
+  for (const mode of ['singles', 'fixed', 'partnerMix']) {
+    for (const courts of [1, 3, 12]) {
+      const p = planner();
+      p.state.format = mode === 'singles' ? 'singles' : 'doubles';
+      p.state.mode = mode === 'partnerMix' ? 'partnerMix' : 'limited';
+      p.state.courts = courts;
+      p.state.teams = Array.from({ length: 12 }, (_, i) => `P${i}`);
+      p.state.matches = p.scheduleMatches(mode === 'partnerMix'
+        ? p.generatePartnerMix(p.state.teams, 1)
+        : p.generateRoundRobin(p.state.teams));
+      p.state.matches[0].scoreA = 6; p.state.matches[0].scoreB = 3;
+      p.state.liveId = 'existing-link';
+      p.state.participants = ['Changed preparation roster'];
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const before = JSON.stringify(p.state.matches);
+        const length = p.state.matches.length;
+        const lastSlot = Math.max(...p.state.matches.map(m => m.slot));
+        const lastRound = Math.max(...p.state.matches.map(m => m.round));
+        const added = p.appendTournamentRound();
+        assert.equal(JSON.stringify(p.state.matches.slice(0, length)), before);
+        assert.equal(p.state.liveId, 'existing-link');
+        const counts = new Map(p.state.teams.map(name => [name, 0]));
+        const slots = new Map();
+        for (const match of added) {
+          assert.ok(match.slot > lastSlot);
+          assert.equal(match.round, lastRound + 1);
+          assert.equal(match.roundLabel, `Runde ${lastRound + 1}`);
+          assert.equal(match.scoreA, ''); assert.equal(match.scoreB, '');
+          const occupied = slots.get(match.slot) || new Set();
+          assert.ok(!occupied.has(match.court)); occupied.add(match.court); slots.set(match.slot, occupied);
+          assert.ok(match.court >= 1 && match.court <= courts);
+          const players = mode === 'partnerMix' ? [...match.playersA, ...match.playersB] : [match.teamA, match.teamB];
+          players.forEach(name => counts.set(name, counts.get(name) + 1));
+        }
+        assert.ok([...counts.values()].every(count => count === 1));
+        assert.equal(new Set(p.state.matches.map(m => m.id)).size, p.state.matches.length);
+      }
+    }
+  }
+});
+
+test('impossible additional rounds leave the tournament unchanged', () => {
+  const p = planner();
+  assert.throws(() => p.appendTournamentRound(), /zuerst/);
+  for (const mode of ['limited', 'partnerMix']) {
+    p.state.mode = mode;
+    p.state.teams = mode === 'limited' ? ['A', 'B', 'C'] : ['A', 'B', 'C', 'D', 'E', 'F'];
+    p.state.matches = [{ id: 'keep', scoreA: 6, scoreB: 1, slot: 0, round: 1 }];
+    const before = JSON.stringify(p.state);
+    assert.throws(() => p.appendTournamentRound(), /Genau ein weiteres Spiel/);
+    assert.equal(JSON.stringify(p.state), before);
+  }
 });
 
 test('deleting a saved tournament removes its local data and preserves a usable empty planner', () => {
@@ -156,4 +211,3 @@ test('fixed doubles and partner rotation retain their planning behavior', () => 
   p.state.courts = 3; p.state.strengths = ninePlayers.map(() => 2);
   assert.deepEqual(Array.from(p.generatePartnerMix(ninePlayers, 4), round => round.matches.length), [2, 2, 2, 2, 1]);
 });
-
