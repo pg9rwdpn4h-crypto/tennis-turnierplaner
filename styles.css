@@ -153,7 +153,7 @@ input:hover, select:hover { border-color: #b9c4bd; }
 .round-timer.is-finished .timer-display, .round-timer.is-finished .timer-status { color: var(--danger); }
 .schedule-list { display: grid; gap: 20px; }
 .round-block { background: white; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; box-shadow: 0 9px 25px rgba(18,32,48,.05); }
-.round-header { display: flex; justify-content: space-between; align-items: center; background: #eef4ff; padding: 12px 17px; border-bottom: 1px solid var(--line); box-shadow: inset 5px 0 var(--lime); }
+.round-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; background: #eef4ff; padding: 12px 17px; border-bottom: 1px solid var(--line); box-shadow: inset 5px 0 var(--lime); }
 .round-header h3 { margin: 0; font-size: .94rem; }.round-header span { color: var(--muted); font-size: .8rem; }
 .match-row { display: grid; grid-template-columns: 82px 1fr 90px 1fr 132px; align-items: center; gap: 12px; min-height: 66px; padding: 9px 17px; border-bottom: 1px solid #edf0ed; }
 .match-row:last-child { border-bottom: 0; }

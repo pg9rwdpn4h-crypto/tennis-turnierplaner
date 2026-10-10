@@ -132,8 +132,9 @@
     state.strengths = draft ? [...draft.strengths] : state.participants.map(() => 2);
   }
 
-  function confirmAction(message) {
+  function confirmAction(message, title = 'Spielplan ersetzen?') {
     const dialog = $('#planChangeDialog');
+    $('#confirmTitle').textContent = title;
     $('#confirmMessage').textContent = message;
     dialog.returnValue = 'cancel';
     return new Promise(resolve => {
@@ -363,7 +364,7 @@
     return '';
   }
 
-  function generatePartnerMix(players, gamesPerPlayer, history = []) {
+  function generatePartnerMix(players, gamesPerPlayer, history = [], opening = null) {
     const validationError = partnerMixValidation(players.length, Number(gamesPerPlayer));
     if (validationError) throw new Error(validationError);
     const partnerCounts = new Map(), opponentCounts = new Map();
@@ -378,12 +379,19 @@
     const matchCapacity = Math.min(state.courts, Math.floor(players.length / 4));
     const totalMatches = players.length * Number(gamesPerPlayer) / 4;
     const roundCount = Math.max(Number(gamesPerPlayer), Math.ceil(totalMatches / matchCapacity));
-    const matchesPerRound = Array.from({ length: roundCount }, (_, index) =>
+    let matchesPerRound = Array.from({ length: roundCount }, (_, index) =>
       Math.min(matchCapacity, Math.max(0, totalMatches - index * matchCapacity))
     );
+    if (opening && Number(gamesPerPlayer) === 1) {
+      matchesPerRound = [opening.capacity];
+      for (let left = totalMatches - opening.capacity; left > 0; left -= matchCapacity) {
+        matchesPerRound.push(Math.min(matchCapacity, left));
+      }
+    }
     const rounds = [];
     matchesPerRound.forEach((matchCount, roundIndex) => {
       const active = [...players]
+        .filter(name => !opening || roundIndex !== 0 || !opening.busy.has(name))
         .map(name => ({ name, remaining: remaining[name], tie: Math.random() }))
         .sort((a, b) => b.remaining - a.remaining || a.tie - b.tie)
         .slice(0, matchCount * 4)
@@ -476,9 +484,16 @@
     const error = additionalRoundError();
     if (error) throw new Error(error);
     // Use the scheduled roster, even if the preparation form has since changed.
+    const lastSlot = Math.max(...state.matches.map(match => match.slot));
+    const lastMatches = state.matches.filter(match => match.slot === lastSlot);
+    const busy = new Set(lastMatches.flatMap(matchParticipants));
+    const freeCourts = Array.from({ length: state.courts }, (_, i) => i + 1)
+      .filter(court => !lastMatches.some(match => match.court === court));
+    const canFill = !lastMatches.some(match => [match.scoreA, match.scoreB].some(score => score !== '' && score != null));
+    const capacity = canFill ? Math.min(freeCourts.length, Math.floor((state.teams.length - busy.size) / (state.mode === 'partnerMix' ? 4 : 2))) : 0;
     let rounds;
     if (state.mode === 'partnerMix') {
-      rounds = generatePartnerMix(state.teams, 1, state.matches);
+      rounds = generatePartnerMix(state.teams, 1, state.matches, capacity ? { capacity, busy } : null);
     } else {
       const encounters = new Map();
       state.matches.forEach(match => incrementCount(encounters, pairKey(match.teamA, match.teamB)));
@@ -489,22 +504,107 @@
       })).sort((a, b) => a.repeats - b.repeats)[0].round];
     }
     const number = Math.max(...state.matches.map(match => Number(match.round) || 0)) + 1;
-    const firstSlot = Math.max(...state.matches.map(match => match.slot)) + 1;
     rounds.forEach(round => {
       round.label = `Runde ${number}`;
       round.matches.forEach(match => { match.round = number; });
     });
-    const added = scheduleMatches(rounds).map(match => ({ ...match, slot: match.slot + firstSlot }));
+    const pending = rounds.flatMap(round => round.matches);
+    const filled = [];
+    if (capacity) {
+      for (let index = 0; index < pending.length && filled.length < capacity;) {
+        if (matchParticipants(pending[index]).some(name => busy.has(name))) { index++; continue; }
+        const match = pending.splice(index, 1)[0];
+        filled.push({ ...match, slot: lastSlot, court: freeCourts[filled.length] });
+        matchParticipants(match).forEach(name => busy.add(name));
+      }
+    }
+    const added = [...filled, ...scheduleMatches([{ label: `Runde ${number}`, matches: pending }])
+      .map(match => ({ ...match, slot: match.slot + lastSlot + 1 }))];
     state.matches.push(...added);
+    new Set(added.map(match => match.slot)).forEach(updateSlotDescription);
     return added;
+  }
+
+  function matchParticipants(match) {
+    return state.mode === 'partnerMix' ? [...(match.playersA || []), ...(match.playersB || [])] : [match.teamA, match.teamB];
+  }
+
+  function updateSlotDescription(slot) {
+    const matches = state.matches.filter(match => match.slot === slot);
+    const rounds = [...new Set(matches.map(match => match.round))];
+    const active = new Set(matches.flatMap(matchParticipants));
+    const resting = state.teams.filter(name => !active.has(name));
+    matches.forEach(match => {
+      match.roundLabel = `Runde${rounds.length > 1 ? 'n' : ''} ${rounds.join(' / ')}`;
+      match.roundNote = resting.length ? `Pause: ${resting.join(', ')}` : '';
+    });
   }
 
   function addTournamentRound() {
     try {
-      const added = appendTournamentRound();
+      appendTournamentRound();
       saveState(); renderOutputs();
-      $('#additionalRoundHint').textContent = `Runde hinzugefügt: ${added.length} neue Spiele. Jeder Teilnehmer hat ein weiteres Spiel.`;
-    } catch (error) { $('#additionalRoundHint').textContent = error.message; }
+    } catch (error) { alert(error.message); }
+  }
+
+  function findRemovalRotation(number) {
+    const rounds = [...new Set(state.matches.map(match => match.round))];
+    const selected = rounds.indexOf(number);
+    if (selected < 0) return null;
+    const appearances = rounds.map(round => {
+      const counts = new Map(state.teams.map(name => [name, 0]));
+      state.matches.filter(match => match.round === round).forEach(match => {
+        const names = state.mode === 'partnerMix'
+          ? [...(match.playersA || []), ...(match.playersB || [])] : [match.teamA, match.teamB];
+        names.forEach(name => counts.set(name, (counts.get(name) || 0) + 1));
+      });
+      return counts;
+    });
+    let best = null;
+    for (let start = selected; start >= 0; start--) {
+      const totals = new Map(state.teams.map(name => [name, 0]));
+      for (let end = start; end < rounds.length; end++) {
+        if (best && end - start + 1 >= best.rounds.length) break;
+        appearances[end].forEach((count, name) => totals.set(name, (totals.get(name) || 0) + count));
+        const values = [...totals.values()];
+        if (end >= selected && values.length === state.teams.length && values[0] > 0 && values.every(count => count === values[0])) {
+          best = { rounds: rounds.slice(start, end + 1), gamesPerParticipant: values[0] };
+          break;
+        }
+      }
+    }
+    return best;
+  }
+
+  async function removeTournamentRound(number, confirmRemoval = confirmAction) {
+    const tournament = state;
+    const tournamentId = activeTournamentId;
+    const schedule = state.matches;
+    if (!schedule.some(match => match.round === number)) return false;
+    const rotation = findRemovalRotation(number);
+    if (!rotation) throw new Error('Diese Runde gehört zu keiner vollständigen Rotation, bei der jeder Teilnehmer gleich viele Spiele verliert. Es wurde nichts entfernt.');
+    const removedRounds = new Set(rotation.rounds);
+    const matches = schedule.filter(match => removedRounds.has(match.round));
+    const hasResults = matches.some(match => [match.scoreA, match.scoreB].some(score => score !== '' && score != null));
+    const slots = new Set(matches.map(match => match.slot)).size;
+    const message = `Vollständige Rotation (Runde${rotation.rounds.length > 1 ? 'n' : ''} ${rotation.rounds.join(', ')}) mit ${matches.length} Spielen${slots > 1 ? ` in ${slots} Zeitblöcken` : ''} entfernen?`
+      + ` Jeder ${state.mode === 'partnerMix' || state.format === 'singles' ? 'Spieler' : 'Teilnehmer bzw. jedes feste Team'} verliert ${rotation.gamesPerParticipant} ${rotation.gamesPerParticipant === 1 ? 'Spiel' : 'Spiele'}.`
+      + (hasResults ? ' Achtung: In dieser Rotation sind bereits Ergebnisse eingetragen. Diese werden unwiderruflich gelöscht und aus der Rangliste entfernt.' : '')
+      + ' Die übrigen Runden behalten ihre Spielzeiten und Ergebnisse.';
+    if (!await confirmRemoval(message, 'Rotation entfernen?')) return false;
+    // A remote update or tournament switch must not delete a different schedule.
+    if (state !== tournament || activeTournamentId !== tournamentId || state.matches !== schedule) return false;
+    state.matches = schedule.filter(match => !removedRounds.has(match.round));
+    new Set(matches.map(match => match.slot)).forEach(updateSlotDescription);
+    return true;
+  }
+
+  async function deleteRound(number) {
+    try {
+      if (!await removeTournamentRound(number)) return;
+    } catch (error) { alert(error.message); return; }
+    if (!state.matches.length) resetRoundTimer();
+    saveState(); renderOutputs();
   }
 
   function scheduleMatches(rounds) {
@@ -527,7 +627,7 @@
     $('#roundTimer').classList.toggle('is-hidden', !hasMatches);
     $('#additionalRoundActions').classList.toggle('is-hidden', !hasMatches);
     $('#addRoundButton').disabled = !!additionalRoundError();
-    $('#additionalRoundHint').textContent = additionalRoundError() || 'Ein weiteres Spiel für jeden Teilnehmer. Rückspiele sind möglich; bei Bedarf entstehen mehrere Zeitblöcke.';
+    $('#addRoundButton').title = additionalRoundError();
     renderRoundTimer();
     renderSchedule(); renderStandings();
   }
@@ -628,6 +728,15 @@
       const time = addMinutes(state.startTime, slot * (state.duration + state.breakDuration));
       const phase = matches[0].roundLabel;
       block.innerHTML = `<header class="round-header"><h3>${escapeHtml(phase)}</h3><span>${time} Uhr · ${state.duration} Min.${matches[0].roundNote ? ` · ${escapeHtml(matches[0].roundNote)}` : ''}</span></header>`;
+      const roundNumbers = [...new Set(matches.map(match => match.round))];
+      roundNumbers.forEach(number => {
+        const remove = document.createElement('button');
+        remove.type = 'button'; remove.className = 'button button-danger';
+        remove.textContent = roundNumbers.length > 1 ? `Rotation mit Runde ${number} entfernen` : 'Rotation entfernen';
+        remove.setAttribute('aria-label', `Vollständige Rotation mit Runde ${number} entfernen`);
+        remove.addEventListener('click', () => deleteRound(number));
+        $('.round-header', block).appendChild(remove);
+      });
       matches.forEach(match => {
         const row = document.createElement('div'); row.className = 'match-row';
         row.innerHTML = `<span class="court-badge">Platz ${match.court}</span>
