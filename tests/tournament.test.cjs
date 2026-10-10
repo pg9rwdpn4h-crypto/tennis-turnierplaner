@@ -16,7 +16,7 @@ function planner(saved = null) {
     setItem: (key, value) => storage.set(key, value),
     removeItem: key => storage.delete(key)
   } };
-  vm.runInNewContext(source.slice(0, startup) + '\n function activateTournament(id) { activeTournamentId = id; library.activeId = id; saveLibrary(); } globalThis.planner = { state, library, activeTournamentId, appendTournamentRound, additionalRoundError, loadState, removeLocalTournament, generateSingles, generateRoundRobin, limitRounds, generatePartnerMix, partnerMixValidation, scheduleMatches, calculateStandings, calculatePlayerStandings, buildSchedulePdf, rememberParticipants, restoreParticipants, formatCountdown, countdownRemaining }; })();', sandbox);
+  vm.runInNewContext(source.slice(0, startup) + '\n function activateTournament(id) { activeTournamentId = id; library.activeId = id; saveLibrary(); } globalThis.planner = { state, library, activeTournamentId, appendTournamentRound, additionalRoundError, removeTournamentRound, loadState, removeLocalTournament, generateSingles, generateRoundRobin, limitRounds, generatePartnerMix, partnerMixValidation, scheduleMatches, calculateStandings, calculatePlayerStandings, buildSchedulePdf, rememberParticipants, restoreParticipants, formatCountdown, countdownRemaining }; })();', sandbox);
   sandbox.planner.storage = storage;
   return sandbox.planner;
 }
@@ -69,6 +69,183 @@ test('additional rounds preserve existing games and give every scheduled partici
       }
     }
   }
+});
+
+test('removing a round deletes every time block and preserves other games in all formats', async () => {
+  for (const mode of ['singles', 'fixed', 'partnerMix']) {
+    const p = planner();
+    p.state.format = mode === 'singles' ? 'singles' : 'doubles';
+    p.state.mode = mode === 'partnerMix' ? 'partnerMix' : 'limited';
+    p.state.courts = 1;
+    p.state.teams = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+    p.state.matches = p.scheduleMatches(mode === 'partnerMix'
+      ? p.generatePartnerMix(p.state.teams, 1) : p.generateRoundRobin(p.state.teams));
+    const added = p.appendTournamentRound();
+    added.at(-1).scoreA = 6; added.at(-1).scoreB = 2;
+    const number = added[0].round;
+    const later = p.appendTournamentRound();
+    const kept = JSON.stringify(p.state.matches.filter(match => match.round !== number));
+    p.state.liveId = 'keep-live-link';
+    const counts = p.state.matches.length;
+    assert.equal(await p.removeTournamentRound(number, async (message, title) => {
+      assert.match(message, /Zeitblöcken/);
+      assert.match(message, /bereits Ergebnisse/);
+      assert.equal(title, 'Rotation entfernen?');
+      assert.equal(p.state.matches.length, counts);
+      return true;
+    }), true);
+    assert.equal(JSON.stringify(p.state.matches), kept);
+    assert.equal(p.state.liveId, 'keep-live-link');
+    assert.ok(p.state.matches.includes(later[0]));
+    const next = p.appendTournamentRound();
+    assert.equal(next[0].round, later[0].round + 1);
+    const standings = mode === 'partnerMix'
+      ? p.calculatePlayerStandings(p.state.teams, p.state.matches)
+      : p.calculateStandings(p.state.teams, p.state.matches);
+    assert.ok(standings.every(row => row.played === 0));
+  }
+});
+
+test('removal warns for partial and zero scores; cancelling preserves all data', async () => {
+  for (const [scoreA, scoreB] of [[0, ''], ['', '0'], [6, 3], ['', '']]) {
+    const p = planner();
+    p.state.teams = ['A', 'B'];
+    p.state.matches = [{ id: 'keep', teamA: 'A', teamB: 'B', round: 1, slot: 0, scoreA, scoreB }];
+    const before = JSON.stringify(p.state);
+    assert.equal(await p.removeTournamentRound(1, async message => {
+      assert.equal(message.includes('bereits Ergebnisse'), scoreA !== '' || scoreB !== '');
+      return false;
+    }), false);
+    assert.equal(JSON.stringify(p.state), before);
+  }
+});
+
+test('last round can be removed; missing rounds and changed schedules are left alone', async () => {
+  const p = planner();
+  p.state.teams = ['A', 'B'];
+  p.state.matches = [{ id: 'last', teamA: 'A', teamB: 'B', round: 1, slot: 0, scoreA: '', scoreB: '' }];
+  assert.equal(await p.removeTournamentRound(99, async () => assert.fail('No dialog for missing round')), false);
+  assert.equal(await p.removeTournamentRound(1, async () => true), true);
+  assert.equal(p.state.matches.length, 0);
+  p.state.matches = [{ id: 'old', teamA: 'A', teamB: 'B', round: 1, slot: 0 }];
+  const replacement = [{ id: 'remote-update', round: 1, slot: 0 }];
+  assert.equal(await p.removeTournamentRound(1, async () => {
+    p.state.matches = replacement;
+    return true;
+  }), false);
+  assert.equal(p.state.matches, replacement);
+});
+
+test('rotation removal gives every participant equal losses despite byes and limited courts', async () => {
+  for (const mode of ['singles', 'fixed', 'partnerMix']) {
+    for (const courts of [1, 3]) {
+      for (const selected of [1, 2, 3]) {
+        const p = planner();
+        p.state.format = mode === 'singles' ? 'singles' : 'doubles';
+        p.state.mode = mode === 'partnerMix' ? 'partnerMix' : 'limited';
+        p.state.courts = courts;
+        p.state.teams = Array.from({ length: mode === 'partnerMix' ? 9 : 5 }, (_, i) => `P${i}`);
+        const rounds = mode === 'partnerMix' ? p.generatePartnerMix(p.state.teams, 4) : p.generateRoundRobin(p.state.teams);
+        p.state.matches = p.scheduleMatches(rounds);
+        // Keep a later complete rotation to verify that removal is minimal.
+        const first = [...p.state.matches];
+        const offset = Math.max(...first.map(m => m.slot)) + 1;
+        p.state.matches.push(...first.map(m => ({ ...m, id: `${m.id}-later`, round: m.round + rounds.length, slot: m.slot + offset })));
+        const before = [...p.state.matches];
+        assert.equal(await p.removeTournamentRound(selected, async message => {
+          assert.match(message, /Vollständige Rotation/);
+          return true;
+        }), true);
+        const removed = before.filter(match => !p.state.matches.includes(match));
+        assert.ok(removed.some(match => match.round === selected));
+        const counts = new Map(p.state.teams.map(name => [name, 0]));
+        removed.forEach(match => {
+          const names = mode === 'partnerMix' ? [...match.playersA, ...match.playersB] : [match.teamA, match.teamB];
+          names.forEach(name => counts.set(name, counts.get(name) + 1));
+        });
+        assert.ok([...counts.values()].every(count => count > 0 && count === counts.get(p.state.teams[0])));
+        assert.ok(p.state.matches.length >= first.length);
+      }
+    }
+  }
+});
+
+test('incomplete rotations cannot be removed, even after confirmation', async () => {
+  const p = planner();
+  p.state.teams = ['A', 'B', 'C'];
+  p.state.matches = p.scheduleMatches(p.generateRoundRobin(p.state.teams).slice(0, 2));
+  const before = JSON.stringify(p.state);
+  await assert.rejects(p.removeTournamentRound(1, async () => assert.fail('No destructive confirmation')), /keiner vollständigen Rotation/);
+  assert.equal(JSON.stringify(p.state), before);
+});
+
+test('rotation warning includes results in adjacent rounds and cancelling preserves them', async () => {
+  const p = planner();
+  p.state.teams = ['A', 'B', 'C'];
+  p.state.matches = p.scheduleMatches(p.generateRoundRobin(p.state.teams));
+  p.state.matches.at(-1).scoreA = 0;
+  const before = JSON.stringify(p.state);
+  assert.equal(await p.removeTournamentRound(1, async message => {
+    assert.match(message, /Runden 1, 2, 3/);
+    assert.match(message, /verliert 2 Spiele/);
+    assert.match(message, /bereits Ergebnisse/);
+    return false;
+  }), false);
+  assert.equal(JSON.stringify(p.state), before);
+});
+
+test('12 mixed players fill both courts when two rotations are appended', async () => {
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const p = planner();
+    p.state.mode = 'partnerMix'; p.state.courts = 2;
+    p.state.teams = Array.from({ length: 12 }, (_, i) => `Player ${i + 1}`);
+    p.state.matches = p.scheduleMatches(p.generatePartnerMix(p.state.teams, 2));
+    const original = JSON.stringify(p.state.matches);
+    const first = p.appendTournamentRound();
+    const lastSlot = Math.max(...first.map(m => m.slot));
+    assert.equal(first.filter(m => m.slot === lastSlot).length, 1);
+    const second = p.appendTournamentRound();
+    assert.equal(second.filter(m => m.slot === lastSlot).length, 1);
+    assert.equal(JSON.stringify(p.state.matches.slice(0, 6)), original);
+    const slots = new Map();
+    const counts = new Map(p.state.teams.map(name => [name, 0]));
+    for (const match of p.state.matches) {
+      const group = slots.get(match.slot) || [];
+      group.push(match); slots.set(match.slot, group);
+      [...match.playersA, ...match.playersB].forEach(name => counts.set(name, counts.get(name) + 1));
+    }
+    assert.equal(slots.size, 6);
+    assert.ok([...counts.values()].every(count => count === 4));
+    for (const group of slots.values()) {
+      assert.equal(group.length, 2);
+      assert.equal(new Set(group.map(m => m.court)).size, 2);
+      const names = group.flatMap(m => [...m.playersA, ...m.playersB]);
+      assert.equal(new Set(names).size, 8);
+    }
+    const shared = slots.get(lastSlot);
+    assert.match(shared[0].roundLabel, /Runden/);
+    const active = new Set(shared.flatMap(m => [...m.playersA, ...m.playersB]));
+    assert.equal(shared[0].roundNote, `Pause: ${p.state.teams.filter(name => !active.has(name)).join(', ')}`);
+    const placements = second.map(m => ({ id: m.id, slot: m.slot, court: m.court }));
+    assert.equal(await p.removeTournamentRound(first[0].round, async () => true), true);
+    assert.ok(second.every(m => p.state.matches.includes(m)));
+    assert.deepEqual(second.map(m => ({ id: m.id, slot: m.slot, court: m.court })), placements);
+    assert.equal(second.find(m => m.slot === lastSlot).roundLabel, `Runde ${second[0].round}`);
+  }
+});
+
+test('appending does not fill a time block that already contains a partial result', () => {
+  const p = planner();
+  p.state.mode = 'partnerMix'; p.state.courts = 2;
+  p.state.teams = Array.from({ length: 12 }, (_, i) => `P${i}`);
+  p.state.matches = p.scheduleMatches(p.generatePartnerMix(p.state.teams, 1));
+  const lastSlot = Math.max(...p.state.matches.map(m => m.slot));
+  p.state.matches.at(-1).scoreA = 0;
+  const before = JSON.stringify(p.state.matches);
+  const length = p.state.matches.length;
+  const added = p.appendTournamentRound();
+  assert.ok(added.every(m => m.slot > lastSlot));
+  assert.equal(JSON.stringify(p.state.matches.slice(0, length)), before);
 });
 
 test('impossible additional rounds leave the tournament unchanged', () => {
