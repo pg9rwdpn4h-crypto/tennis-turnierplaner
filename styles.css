@@ -70,7 +70,7 @@ h3 { margin-bottom: 6px; }
 
 .setup-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 20px; }
 .format-card { margin-bottom: 20px; }
-.format-selector { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.format-selector { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .format-selector span { min-height: 132px; gap: 7px; padding: 20px; }
 .format-selector b { font-size: 1.15rem; }
 .format-selector strong { color: var(--court); font-size: .9rem; }
@@ -110,6 +110,7 @@ h3 { margin-bottom: 6px; }
 .field { display: flex; flex-direction: column; gap: 6px; font-size: .83rem; font-weight: 750; color: #4e5a6b; }
 .field-wide { grid-column: 1 / -1; }
 input, select { width: 100%; border: 1px solid var(--line); background: #fbfcfa; border-radius: 9px; min-height: 43px; padding: 9px 11px; color: var(--ink); }
+input[type="checkbox"] { width: 18px; min-height: 18px; height: 18px; padding: 0; vertical-align: middle; accent-color: var(--court); }
 input:hover, select:hover { border-color: #b9c4bd; }
 .segmented { display: grid; gap: 9px; border: 0; padding: 0; margin: 0; }
 .segmented label { cursor: pointer; position: relative; }
@@ -168,6 +169,34 @@ input:hover, select:hover { border-color: #b9c4bd; }
 .empty-state h3 { color: var(--ink); }
 .empty-ball { width: 48px; height: 48px; border-radius: 50%; background: var(--lime); margin: 0 auto 15px; box-shadow: inset 8px 0 0 rgba(16,28,44,.08); }
 .ranking-rule { color: var(--muted); font-size: .82rem; margin-bottom: 2px; }
+.scoring-rules { display: flex; flex-wrap: wrap; gap: 10px 24px; background: #edf3ff; padding: 15px 18px; border-radius: 10px; color: var(--ink); }
+.scoring-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; }
+.scoring-grid h3 { margin: 0 0 8px; }
+.scoring-grid p { margin: 8px 0; }
+.scoring-table th, .scoring-table td { font-variant-numeric: tabular-nums; }
+.scoring-table small { display: block; font-size: .7rem; font-weight: 400; color: var(--muted); margin-top: 5px; white-space: normal; }
+.scoring-table .is-selected { background: #edf3ff; }
+.ranking-person { border: 0; padding: 6px 0; background: transparent; color: var(--court); font: inherit; font-weight: 800; text-align: left; cursor: pointer; }
+.ranking-person:focus-visible { outline: 3px solid var(--court); outline-offset: 4px; }
+.ranking-detail { margin-top: 20px; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: white; }
+.ranking-detail h3 { margin-top: 0; }
+.scoring-heading, .scoring-total { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; font-variant-numeric: tabular-nums; }
+.scoring-track { height: 7px; background: #edf0f5; border-radius: 6px; margin: 12px 0; }
+.scoring-track span { display: block; height: 100%; background: var(--court); border-radius: inherit; }
+.scoring-total { border-top: 1px solid var(--line); margin-top: 20px; padding-top: 16px; }
+.scoring-total strong { color: var(--court); font-size: 1.2rem; }
+.score-feedback { grid-column: 1 / -1; margin: 0 0 5px; color: var(--muted); font-size: .75rem; }
+.set-summary { display: grid; text-align: center; font-variant-numeric: tabular-nums; }
+.set-summary strong { color: var(--court); font-size: 1.25rem; }
+.set-summary span, .live-score small { display: block; font-size: .72rem; color: var(--muted); font-weight: 400; }
+.set-editor { grid-column: 1 / -1; padding: 8px 0; }
+.set-editor [hidden] { display: none !important; }
+.set-actions { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-top: 12px; }
+.set-actions .field { flex: 1 1 160px; }
+.set-actions input { max-width: 150px; }
+.set-manual { margin: 12px 0; }
+.set-final { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 16px; }
+@media (max-width: 700px) { .scoring-grid { grid-template-columns: 1fr; } .ranking-detail { padding: 15px; } }
 .standings-group { margin-bottom: 22px; }
 .standings-group h3 { font-size: .95rem; margin: 0 0 9px; color: var(--court); }
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 15px; background: white; box-shadow: var(--shadow); }

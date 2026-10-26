@@ -9,7 +9,7 @@
     <meta name="theme-color" content="#2f5fb3" />
     <title>RSV Finningen – Tennis-Turnierplaner</title>
     <link rel="icon" type="image/png" href="logo-rsv-finningen.png" />
-    <link rel="stylesheet" href="styles.css?v=runde-entfernen-1" />
+    <link rel="stylesheet" href="styles.css?v=saetze-nachtragen-1" />
   </head>
   <body>
     <header class="topbar">
@@ -29,7 +29,6 @@
         <div class="intro-actions">
           <button class="button button-ghost" id="tournamentLibraryButton" type="button">Meine Turniere</button>
           <button class="button button-primary" id="liveShareButton" type="button">Live teilen</button>
-          <button class="button button-ghost" id="printButton" type="button">PDF herunterladen</button>
           <button class="button button-danger" id="resetButton" type="button">Zurücksetzen</button>
         </div>
       </section>
@@ -49,6 +48,7 @@
             <legend class="sr-only">Turnierart auswählen</legend>
             <label><input type="radio" name="format" value="singles" /><span><b>Einzelturnier</b><strong>1 gegen 1</strong><small>Jeder spielt für sich.</small></span></label>
             <label><input type="radio" name="format" value="doubles" checked /><span><b>Doppelturnier</b><strong>2 gegen 2</strong><small>Feste oder wechselnde Partner.</small></span></label>
+            <label><input type="radio" name="format" value="threeKings" /><span><b>Drei Königsturnier</b><strong>Tennis · Badminton · Tischtennis</strong><small>Doppel mit wechselnden Partnern.</small></span></label>
           </fieldset>
         </article>
         <div class="setup-grid">
@@ -67,7 +67,7 @@
               <label class="field">Startzeit
                 <input id="startTime" type="time" value="17:00" />
               </label>
-              <label class="field">Plätze
+              <label class="field" id="courtCountWrap">Plätze
                 <input id="courtCount" type="number" min="1" max="12" value="3" />
               </label>
               <label class="field">Spieldauer (Min.)
@@ -90,11 +90,37 @@
               <label><input type="radio" name="mode" value="partnerMix" /><span>Partnerwechsel<small>Neue Doppelpartner in jeder Runde</small></span></label>
             </fieldset>
             <p class="helper is-hidden" id="singlesHelper">Jeder spielt für sich gegen unterschiedliche Gegner. Pausen werden im Spielplan angezeigt.</p>
+            <div id="disciplineSettings" class="is-hidden">
+              <p class="helper">Doppel mit wechselnden Partnern. Jede Person erhält je Disziplin exakt die eingestellte Spielanzahl. Gemeinsame Spieldauer und Wechselpause gelten für alle Disziplinen. Rückspiele und wiederholte Partner sind möglich.</p>
+              <div class="form-grid">
+                <label class="field">Tennisplätze<input id="tennisCourts" type="number" min="1" max="12" value="2" /></label>
+                <label class="field">Tennis · Spiele pro Person<input id="tennisGames" type="number" min="1" max="48" value="2" /></label>
+                <label class="field">Badmintonfelder<input id="badmintonCourts" type="number" min="1" max="12" value="2" /></label>
+                <label class="field">Badminton · Spiele pro Person<input id="badmintonGames" type="number" min="1" max="48" value="3" /></label>
+                <label class="field">Tischtennisplatten<input id="tableTennisCourts" type="number" min="1" max="12" value="2" /></label>
+                <label class="field">Tischtennis · Spiele pro Person<input id="tableTennisGames" type="number" min="1" max="48" value="1" /></label>
+              </div>
+              <label class="field"><span><input id="tennisFlexible" type="checkbox" /> Tennis: Einzel und Dreierrunden bei Bedarf erlauben</span></label>
+              <label class="field"><span><input id="badmintonFlexible" type="checkbox" /> Badminton: Einzel und Dreierrunden bei Bedarf erlauben</span></label>
+              <label class="field"><span><input id="tableTennisFlexible" type="checkbox" /> Tischtennis: Einzel und Dreierrunden bei Bedarf erlauben</span></label>
+              <p class="helper">Eine Dreierrunde besteht aus drei Einzeln reihum auf demselben Platz, Feld oder derselben Platte. Jede Person hat darin zwei Spiele. Die drei Einzel teilen sich die Spieldauer eines Zeitblocks; die Reihenfolge steht im Spielplan. Gleiche Spielanzahl bedeutet dabei nicht gleiche Spielzeit.</p>
+              <p class="setup-summary" id="disciplineSuggestion" aria-live="polite"></p>
+              <button class="button button-ghost" id="applyDisciplineSuggestion" type="button">Vorschlag übernehmen</button>
+            </div>
             <label class="field compact-field is-hidden" id="gamesPerTeamWrap"><span id="gamesPerTeamLabel">Spiele pro Team</span>
               <input id="gamesPerTeam" type="number" min="1" max="20" value="3" />
             </label>
           </article>
         </div>
+
+        <article class="card is-hidden" id="threeKingsScoringRules">
+          <div class="card-heading"><div><p class="eyebrow">Einheitliche Zählweise</p><h2>Drei Sportarten, eine Wertung</h2></div></div>
+          <div class="scoring-grid">
+            <div><h3>Kurze Sätze bis 7</h3><p>Jeder Ballwechsel gibt einen Punkt. Wer zuerst 7 erreicht, gewinnt den Satz – ohne Zwei-Punkte-Abstand. Danach beginnt der nächste Satz bei 0:0. Das gilt für alle drei Sportarten.</p></div>
+            <div><h3>Sätze entscheiden</h3><p>Bei Zeitende zählt der laufende Satz nur bei Führung und zusammen mindestens 4 gespielten Punkten. Mehr gewonnene Sätze ergeben den Sieg: 2 Tabellenpunkte. Gleich viele Sätze: 1 Punkt pro Person. Niederlage: 0. Jedes Einzel einer Dreierrunde wird separat gewertet.</p></div>
+            <div><h3>Disziplinen gleich gewichten</h3><p>Erreichte Tabellenpunkte geteilt durch maximal mögliche Tabellenpunkte ergeben die Disziplinwertung. Die Gesamtwertung ist der Durchschnitt der drei Disziplinen. Gleiche Gesamtwertungen teilen sich den Rang.</p></div>
+          </div>
+        </article>
 
         <article class="card participants-card">
           <div class="card-heading participants-heading">
@@ -121,6 +147,7 @@
 
       <section class="tab-panel" id="schedulePanel" data-panel="schedule">
         <div class="summary-strip" id="scheduleSummary"></div>
+        <div id="disciplineOverview" class="table-wrap is-hidden"></div>
         <div class="section-heading">
           <div><p class="eyebrow">Automatisch geplant</p><h2>Spielplan</h2></div>
           <button class="button button-ghost" id="editSetup" type="button">Einstellungen ändern</button>
@@ -151,7 +178,7 @@
       <section class="tab-panel" id="standingsPanel" data-panel="standings">
         <div class="section-heading">
           <div><p class="eyebrow">Live-Auswertung</p><h2>Aktuelle Tabelle</h2></div>
-          <p class="ranking-rule">Sortierung: Siege · Differenz · erzielte Punkte</p>
+          <p class="ranking-rule" id="rankingRule">Sortierung: Siege · Differenz · erzielte Punkte</p>
         </div>
         <div class="empty-state" id="standingsEmpty">
           <h3>Die Tabelle wartet auf den Spielplan</h3>
@@ -208,10 +235,11 @@
       <button class="button button-primary" id="tournamentNew" type="button">Neues Turnier anlegen</button>
     </dialog>
     <footer>Turniere werden lokal gespeichert und nach Anmeldung privat synchronisiert. Live veröffentlichte Spielpläne sind über ihren Link abrufbar.</footer>
-    <script src="app.js?v=runden-auffuellen-1"></script>
+    <script src="three-kings-scoring.js?v=saetze-nachtragen-1"></script>
+    <script src="app.js?v=saetze-nachtragen-1"></script>
     <script src="firebase-config.js"></script>
     <script src="qrcode.min.js"></script>
-    <script type="module" src="live-sharing.js?v=meine-turniere-1"></script>
+    <script type="module" src="live-sharing.js?v=saetze-nachtragen-1"></script>
     <script type="module" src="tournament-library.js?v=turnier-loeschen-1"></script>
   </body>
 </html>

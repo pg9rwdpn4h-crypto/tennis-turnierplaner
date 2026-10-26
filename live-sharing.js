@@ -232,6 +232,7 @@ function startOrganizer(authApi, firestore, app, db) {
 }
 
 function calculateRows(data) {
+  if (data.format === 'threeKings') return globalThis.threeKingsScoring.calculate(data);
   const rows = Object.fromEntries((data.teams || []).map(name => [name, {
     name, played: 0, wins: 0, losses: 0, for: 0, against: 0
   }]));
@@ -259,10 +260,10 @@ function renderViewer(data) {
   document.title = `${data.name || 'Turnier'} – Live-Ergebnisse`;
   document.querySelector('#liveTitle').textContent = data.name || 'Turnier';
   document.querySelector('#liveMeta').textContent =
-    `${data.date || ''} · ${data.format === 'singles' ? 'Einzel' : 'Doppel'} · ${data.courts || 1} Plätze`;
+    `${data.date || ''} · ${data.format === 'threeKings' ? 'Drei Königsturnier · Doppel mit Partnerwechsel' : data.format === 'singles' ? 'Einzel' : 'Doppel'} · ${data.courts || 1} Plätze`;
   showStatus(document.querySelector('#liveViewerStatus'), 'Live verbunden · Ergebnisse aktualisieren sich automatisch');
   const matches = data.matches;
-  const completed = matches.filter(m => validScore(m.scoreA) && validScore(m.scoreB)).length;
+  const completed = matches.filter(m => m.scoringMode === 'sets7' ? m.finished : validScore(m.scoreA) && validScore(m.scoreB)).length;
   document.querySelector('#liveSummary').innerHTML = [
     ['Teilnehmer', data.teams.length], ['Spiele', `${completed} / ${matches.length}`],
     ['Plätze', data.courts], ['Rundendauer', `${data.duration} Min.`]
@@ -273,18 +274,30 @@ function renderViewer(data) {
   document.querySelector('#liveSchedule').innerHTML = [...bySlot.entries()].map(([slot, group]) => {
     const time = addMinutes(data.startTime, slot * (data.duration + data.breakDuration));
     return `<article class="round-block"><header class="round-header"><h3>${escapeHtml(group[0].roundLabel || `Runde ${slot + 1}`)}</h3><span>${time} Uhr · ${escapeHtml(data.duration)} Min.</span></header>
-      ${group.map(match => `<div class="match-row"><span class="court-badge">Platz ${escapeHtml(match.court)}</span>
-        <span class="team-name right">${escapeHtml(match.teamA)}</span><span class="versus">VS</span>
+      ${group.map(match => `<div class="match-row"><span class="court-badge">${escapeHtml(match.discipline === 'tennis' ? `Tennis · Platz ${match.disciplineCourt}` : match.discipline === 'badminton' ? `Badminton · Feld ${match.disciplineCourt}` : match.discipline === 'tableTennis' ? `Tischtennis · Platte ${match.disciplineCourt}` : `Platz ${match.court}`)}</span>
+        <span class="team-name right">${escapeHtml(match.teamA)}${match.matchKind === 'triple' ? `<span class="match-label">Dreierrunde · Einzel ${escapeHtml(match.sequence)}/3 · nacheinander, je ein Drittel des Zeitblocks</span>` : match.matchKind === 'singles' ? '<span class="match-label">Einzel</span>' : ''}</span><span class="versus">VS</span>
         <span class="team-name">${escapeHtml(match.teamB)}</span>
-        <strong class="live-score">${validScore(match.scoreA) && validScore(match.scoreB)
+        <strong class="live-score">${match.scoringMode === 'sets7' ? `${globalThis.threeKingsScoring.setSummary(match).a} : ${globalThis.threeKingsScoring.setSummary(match).b} Sätze<small>${match.finished ? 'Beendet' : 'Erfasste Sätze'}</small><small>${(match.sets || []).map(s => `${escapeHtml(s.a)}:${escapeHtml(s.b)}${s.atTimeLimit ? ' (Zeitende)' : ''}`).join(' · ')}</small>` : validScore(match.scoreA) && validScore(match.scoreB)
           ? `${escapeHtml(match.scoreA)} : ${escapeHtml(match.scoreB)}` : '– : –'}</strong></div>`).join('')}
       </article>`;
   }).join('');
   document.querySelector('#liveScheduleSection').classList.remove('is-hidden');
-  document.querySelector('#liveStandings').innerHTML = `<div class="table-wrap"><table>
+  const standings = document.querySelector('#liveStandings');
+  if (data.format === 'threeKings') {
+    standings.innerHTML = globalThis.threeKingsScoring.render(data, standings.dataset.selectedPerson);
+    standings.onclick = event => {
+      const button = event.target.closest('[data-ranking-person]');
+      if (!button) return;
+      standings.dataset.selectedPerson = button.dataset.rankingPerson;
+      standings.innerHTML = globalThis.threeKingsScoring.render(data, standings.dataset.selectedPerson);
+    };
+  } else {
+    standings.onclick = null;
+    standings.innerHTML = `<div class="table-wrap"><table>
     <thead><tr><th>Rang</th><th>${data.format === 'singles' || data.mode === 'partnerMix' ? 'Spieler' : 'Team'}</th><th>Sp.</th><th>Siege</th><th>Nied.</th><th>Punkte</th><th>Diff.</th></tr></thead>
     <tbody>${calculateRows(data).map((row, index) => `<tr><td class="rank">${index + 1}</td><td class="team-cell">${escapeHtml(row.name)}</td><td>${row.played}</td><td>${row.wins}</td><td>${row.losses}</td><td>${row.for}:${row.against}</td><td>${row.for - row.against}</td></tr>`).join('')}</tbody>
     </table></div>`;
+  }
   document.querySelector('#liveStandingsSection').classList.remove('is-hidden');
 }
 
