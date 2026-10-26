@@ -16,10 +16,210 @@ function planner(saved = null) {
     setItem: (key, value) => storage.set(key, value),
     removeItem: key => storage.delete(key)
   } };
-  vm.runInNewContext(source.slice(0, startup) + '\n function activateTournament(id) { activeTournamentId = id; library.activeId = id; saveLibrary(); } globalThis.planner = { state, library, activeTournamentId, appendTournamentRound, additionalRoundError, removeTournamentRound, loadState, removeLocalTournament, generateSingles, generateRoundRobin, limitRounds, generatePartnerMix, partnerMixValidation, scheduleMatches, calculateStandings, calculatePlayerStandings, buildSchedulePdf, rememberParticipants, restoreParticipants, formatCountdown, countdownRemaining }; })();', sandbox);
+  vm.runInNewContext(source.slice(0, startup) + '\n function activateTournament(id) { activeTournamentId = id; library.activeId = id; saveLibrary(); } globalThis.planner = { suggestThreeKingsGames, generateThreeKings, courtLabel, state, library, activeTournamentId, appendTournamentRound, additionalRoundError, removeTournamentRound, loadState, removeLocalTournament, generateSingles, generateRoundRobin, limitRounds, generatePartnerMix, partnerMixValidation, scheduleMatches, calculateStandings, calculatePlayerStandings, rememberParticipants, restoreParticipants, formatCountdown, countdownRemaining }; })();', sandbox);
   sandbox.planner.storage = storage;
   return sandbox.planner;
 }
+
+test('three kings suggests the smallest valid games in the court ratio', () => {
+  const p = planner();
+  const settings = counts => Object.fromEntries(['tennis', 'badminton', 'tableTennis'].map((s, i) => [s, { courts: counts[i] }]));
+  assert.deepEqual({ ...p.suggestThreeKingsGames(12, settings([1, 2, 3])) }, { tennis: 1, badminton: 2, tableTennis: 3 });
+  assert.deepEqual({ ...p.suggestThreeKingsGames(9, settings([1, 2, 3])) }, { tennis: 4, badminton: 8, tableTennis: 12 });
+  assert.deepEqual({ ...p.suggestThreeKingsGames(6, settings([2, 4, 6])) }, { tennis: 2, badminton: 4, tableTennis: 6 });
+  assert.equal(p.suggestThreeKingsGames(3, settings([1, 2, 3])), null);
+  assert.equal(p.suggestThreeKingsGames(8, settings([0, 2, 3])), null);
+  for (let count = 4; count <= 12; count++) for (let a = 1; a <= 6; a++) for (let b = 1; b <= 6; b++) for (let c = 1; c <= 6; c++) {
+    const games = Object.values(p.suggestThreeKingsGames(count, settings([a, b, c])));
+    for (const g of games) { assert.ok(Number.isInteger(g) && g >= 1 && g <= 48); assert.equal(count * g % 4, 0); }
+    assert.equal(games[0] * b, games[1] * a);
+    assert.equal(games[0] * c, games[2] * a);
+    // No smaller first component can yield another valid proportional combination.
+    for (let first = 1; first < games[0]; first++) {
+      const candidate = [first, first * b / a, first * c / a];
+      assert.ok(!candidate.every(g => Number.isInteger(g) && count * g % 4 === 0));
+    }
+  }
+});
+
+test('large three kings suggestions are accepted and remain intact after reload', () => {
+  const p = planner();
+  const players = ['A', 'B', 'C', 'D', 'E'];
+  const settings = { tennis: { courts: 12 }, badminton: { courts: 11 }, tableTennis: { courts: 1 } };
+  const suggestion = p.suggestThreeKingsGames(players.length, settings);
+  assert.equal(suggestion.tennis, 48);
+  for (const key of Object.keys(settings)) settings[key].games = suggestion[key];
+  p.state.disciplineSettings = settings; p.state.participants = players;
+  const matches = p.generateThreeKings(players);
+  for (const sport of Object.keys(settings)) for (const name of players) {
+    assert.equal(matches.filter(m => m.discipline === sport && [...m.playersA, ...m.playersB].includes(name)).length, suggestion[sport]);
+  }
+  const loaded = planner({ format: 'threeKings', participants: players, disciplineSettings: settings });
+  assert.equal(loaded.state.disciplineSettings.tennis.games, 48);
+});
+
+test('optional table tennis singles and triples preserve exact quotas and court reservations', () => {
+  let singles = 0, triples = 0;
+  for (const size of [4, 5, 6, 7, 8, 9, 12, 16]) for (const courtCounts of [[1, 1, 1], [2, 1, 3]]) for (const target of [1, 2, 3, 4]) for (let attempt = 0; attempt < 3; attempt++) {
+    if (size * target % 2) continue;
+    const p = planner();
+    const names = Array.from({ length: size }, (_, i) => `P${i}`);
+    const unit = size % 2 ? 4 : size % 4 ? 2 : 1;
+    p.state.participants = names;
+    p.state.disciplineSettings = {
+      tennis: { courts: courtCounts[0], games: unit },
+      badminton: { courts: courtCounts[1], games: unit },
+      tableTennis: { courts: courtCounts[2], games: target, flexible: true }
+    };
+    const matches = p.generateThreeKings(names);
+    for (const sport of ['tennis', 'badminton', 'tableTennis']) for (const name of names) {
+      assert.equal(matches.filter(m => m.discipline === sport && [...m.playersA, ...m.playersB].includes(name)).length, p.state.disciplineSettings[sport].games);
+    }
+    const reservations = new Map();
+    for (const m of matches) {
+      if (m.matchKind) assert.equal(m.discipline, 'tableTennis');
+      singles += m.matchKind === 'singles'; triples += m.matchKind === 'triple';
+      const key = m.reservationId || m.id;
+      reservations.set(key, [...(reservations.get(key) || []), m]);
+    }
+    const slots = new Map();
+    for (const reservation of reservations.values()) {
+      const m = reservation[0];
+      const slot = slots.get(m.slot) || { names: new Set(), courts: new Set() };
+      assert.ok(!slot.courts.has(m.court)); slot.courts.add(m.court);
+      const active = new Set(reservation.flatMap(m => [...m.playersA, ...m.playersB]));
+      for (const name of active) { assert.ok(!slot.names.has(name)); slot.names.add(name); }
+      if (m.matchKind === 'triple') {
+        assert.equal(reservation.length, 3); assert.equal(active.size, 3);
+        assert.equal(new Set(reservation.map(m => m.sequence)).size, 3);
+        for (const name of active) assert.equal(reservation.filter(m => [...m.playersA, ...m.playersB].includes(name)).length, 2);
+      }
+      slots.set(m.slot, slot);
+    }
+  }
+  assert.ok(singles > 0); assert.ok(triples > 0);
+});
+
+test('table tennis flexibility is opt-in, changes recommendations, and survives reload', () => {
+  const settings = { tennis: { courts: 2, games: 2 }, badminton: { courts: 2, games: 2 }, tableTennis: { courts: 1, games: 1 } };
+  const p = planner();
+  const names = ['A', 'B', 'C', 'D', 'E', 'F'];
+  p.state.disciplineSettings = settings;
+  assert.equal(p.suggestThreeKingsGames(6, settings).tableTennis, 2);
+  assert.throws(() => p.generateThreeKings(names), /Tischtennis/);
+  settings.tableTennis.flexible = true;
+  assert.equal(p.suggestThreeKingsGames(6, settings).tableTennis, 1);
+  assert.ok(p.generateThreeKings(names).some(m => m.matchKind === 'singles'));
+  assert.throws(() => p.generateThreeKings(names.slice(0, 5)), /Tennis/);
+  settings.tennis.games = 4; settings.badminton.games = 4;
+  assert.throws(() => p.generateThreeKings(names.slice(0, 5)), /Tischtennis/);
+  const loaded = planner({ format: 'threeKings', participants: names, disciplineSettings: settings });
+  assert.equal(loaded.state.disciplineSettings.tableTennis.flexible, true);
+  assert.equal(planner().state.disciplineSettings.tableTennis.flexible, false);
+});
+
+test('triple round results count as two singles per person', () => {
+  const p = planner();
+  const matches = [
+    { teamA: 'Anna', teamB: 'Ben', playersA: ['Anna'], playersB: ['Ben'], scoreA: 11, scoreB: 5, sequence: 1 },
+    { teamA: 'Anna', teamB: 'Cem', playersA: ['Anna'], playersB: ['Cem'], scoreA: 11, scoreB: 8, sequence: 2 },
+    { teamA: 'Ben', teamB: 'Cem', playersA: ['Ben'], playersB: ['Cem'], scoreA: 3, scoreB: 11, sequence: 3 }
+  ].map(m => ({ ...m, discipline: 'tableTennis', disciplineCourt: 1, court: 3, slot: 0, round: 1, roundLabel: 'Zeitblock 1', matchKind: 'triple', reservationId: 'triple1' }));
+  const rows = p.calculatePlayerStandings(['Anna', 'Ben', 'Cem'], matches);
+  assert.ok(rows.every(row => row.played === 2));
+  assert.equal(rows[0].name, 'Anna'); assert.equal(rows[0].wins, 2);
+});
+
+test('every discipline independently supports optional singles and triples', () => {
+  const sports = ['tennis', 'badminton', 'tableTennis'];
+  const observed = new Set();
+  for (let mask = 0; mask < 8; mask++) for (const size of [5, 6, 7, 8, 9, 12]) for (let repeat = 0; repeat < 4; repeat++) {
+    const p = planner();
+    const names = Array.from({ length: size }, (_, i) => `P${i}`);
+    p.state.participants = names;
+    p.state.disciplineSettings = Object.fromEntries(sports.map((sport, index) => [sport, {
+      courts: index + 1, flexible: !!(mask & (1 << index)),
+      games: mask & (1 << index) ? (size % 2 ? 2 : 1) : (size % 2 ? 4 : size % 4 ? 2 : 1)
+    }]));
+    const matches = p.generateThreeKings(names);
+    const slots = new Map();
+    const reservations = new Map();
+    for (const m of matches) {
+      if (m.matchKind) { assert.ok(p.state.disciplineSettings[m.discipline].flexible); observed.add(`${m.discipline}:${m.matchKind}`); }
+      const key = m.reservationId || m.id;
+      reservations.set(key, [...(reservations.get(key) || []), m]);
+    }
+    for (const group of reservations.values()) {
+      const first = group[0];
+      const slot = slots.get(first.slot) || { courts: new Set(), names: new Set() };
+      assert.ok(!slot.courts.has(first.court)); slot.courts.add(first.court);
+      for (const name of new Set(group.flatMap(m => [...m.playersA, ...m.playersB]))) { assert.ok(!slot.names.has(name)); slot.names.add(name); }
+      slots.set(first.slot, slot);
+    }
+    for (const sport of sports) for (const name of names) assert.equal(matches.filter(m => m.discipline === sport && [...m.playersA, ...m.playersB].includes(name)).length, p.state.disciplineSettings[sport].games);
+    const loaded = planner({ format: 'threeKings', participants: names, disciplineSettings: p.state.disciplineSettings });
+    for (const sport of sports) assert.equal(loaded.state.disciplineSettings[sport].flexible, p.state.disciplineSettings[sport].flexible);
+    const suggestion = p.suggestThreeKingsGames(size, p.state.disciplineSettings);
+    for (const sport of sports) assert.equal(size * suggestion[sport] % (p.state.disciplineSettings[sport].flexible ? 2 : 4), 0);
+  }
+  for (const sport of sports) {
+    const p = planner();
+    const names = Array.from({ length: 7 }, (_, i) => `P${i}`);
+    p.state.participants = names;
+    p.state.disciplineSettings = Object.fromEntries(sports.map(s => [s, { courts: 1, games: s === sport ? 2 : 4, flexible: s === sport }]));
+    const matches = p.generateThreeKings(names);
+    assert.ok(matches.some(m => m.discipline === sport && m.matchKind === 'triple'));
+    assert.ok(observed.has(`${sport}:singles`));
+  }
+});
+
+test('three kings gives exact per-sport quotas without player or court conflicts', () => {
+  for (const size of [4, 5, 6, 8, 9, 12, 16, 24, 40]) for (const capacities of [[1, 1, 1], [1, 3, 2], [4, 1, 12]]) for (let repeat = 0; repeat < 6; repeat++) {
+    const p = planner();
+    const players = Array.from({ length: size }, (_, i) => `P${i}`);
+    const unit = size % 2 ? 4 : size % 4 ? 2 : 1;
+    p.state.format = 'threeKings'; p.state.mode = 'partnerMix';
+    p.state.participants = players;
+    const sports = ['tennis', 'badminton', 'tableTennis'];
+    p.state.disciplineSettings = Object.fromEntries(sports.map((s, i) => [s, { courts: capacities[i], games: unit * (i + 1) }]));
+    const matches = p.generateThreeKings(players);
+    const counts = Object.fromEntries(sports.map(s => [s, Object.fromEntries(players.map(n => [n, 0]))]));
+    const slots = new Map();
+    for (const m of matches) {
+      const block = slots.get(m.slot) || { players: new Set(), courts: new Set() };
+      assert.ok(!block.courts.has(m.court)); block.courts.add(m.court);
+      const index = sports.indexOf(m.discipline);
+      const offset = capacities.slice(0, index).reduce((a, b) => a + b, 0);
+      assert.ok(m.court > offset && m.court <= offset + capacities[index]);
+      assert.equal(m.disciplineCourt, m.court - offset);
+      for (const name of [...m.playersA, ...m.playersB]) {
+        assert.ok(!block.players.has(name)); block.players.add(name); counts[m.discipline][name]++;
+      }
+      slots.set(m.slot, block);
+    }
+    for (const s of sports) for (const n of players) assert.equal(counts[s][n], p.state.disciplineSettings[s].games);
+    p.state.matches = matches; p.state.teams = players; p.state.courts = capacities.reduce((a, b) => a + b, 0);
+  }
+});
+
+test('three kings rejects impossible quotas and restores saved settings and results', () => {
+  const p = planner();
+  assert.throws(() => p.generateThreeKings(['A', 'B', 'C']), /mindestens vier/);
+  assert.throws(() => p.generateThreeKings(['A', 'B', 'C', 'D', 'E']), /Tennis/);
+  assert.throws(() => p.generateThreeKings(['A', 'B', 'C', 'A']), /eindeutig/);
+  const loaded = planner({ format: 'threeKings', participants: ['A', 'B', 'C', 'D'], disciplineSettings: { tennis: { courts: 3, games: 4 } }, matches: [{ scoreA: 5, scoreB: 3 }] });
+  assert.equal(loaded.state.format, 'threeKings');
+  assert.equal(loaded.state.mode, 'partnerMix');
+  assert.equal(loaded.state.disciplineSettings.tennis.courts, 3);
+  assert.equal(loaded.state.disciplineSettings.badminton.games, 3);
+  assert.equal(loaded.state.matches[0].scoreA, 5);
+  assert.equal(loaded.state.matches[0].scoringMode, undefined);
+  const empty = planner({ format: 'threeKings', matches: [{ scoreA: '', scoreB: '' }] });
+  assert.equal(empty.state.matches[0].scoringMode, 'sets7');
+  assert.equal(empty.state.matches[0].finished, false);
+  const savedSets = planner({ format: 'threeKings', matches: [{ scoringMode: 'sets7', sets: [{ a: 7, b: 6 }], currentSetA: 3, currentSetB: 1, scoreA: '', scoreB: '', finished: false }] });
+  assert.equal(savedSets.state.matches[0].sets.length, 1); assert.equal(savedSets.state.matches[0].currentSetA, 3);
+});
 
 test('existing single tournament is migrated into a separate saved tournament', () => {
   const p = planner({ name: 'Sommer-Cup', date: '2026-08-01', matches: [{ scoreA: 6, scoreB: 4 }], participants: ['A', 'B'] });
@@ -343,15 +543,12 @@ test('separate participant drafts survive format changes', () => {
   assert.equal(p.state.strengths.join(','), '1,3');
 });
 
-test('singles results use the existing ranking and identify the format in PDF', () => {
+test('singles results use the existing ranking', () => {
   const p = planner();
   const match = { teamA: 'Anna', teamB: 'Ben', scoreA: 6, scoreB: 2, slot: 0, court: 1, roundLabel: 'Runde 1' };
   const rows = p.calculateStandings(['Anna', 'Ben'], [match]);
   assert.equal(rows[0].name, 'Anna'); assert.equal(rows[0].wins, 1); assert.equal(rows[0].diff, 4);
   assert.equal(rows[1].losses, 1);
-  p.state.format = 'singles'; p.state.matches = [match];
-  assert.match(p.buildSchedulePdf(), /Einzel/);
-  p.state.format = 'doubles'; assert.match(p.buildSchedulePdf(), /Doppel/);
 });
 
 test('fixed doubles and partner rotation retain their planning behavior', () => {

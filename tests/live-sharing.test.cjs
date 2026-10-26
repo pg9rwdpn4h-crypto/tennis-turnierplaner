@@ -9,11 +9,13 @@ function sharing() {
   const startup = source.lastIndexOf('\nstart().catch');
   assert.ok(startup > 0);
   const sandbox = {
+    structuredClone,
     window: { FIREBASE_CONFIG: null },
     document: { querySelector: () => null },
     location: { href: 'https://example.org/tennis-turnierplaner/' },
     URL, URLSearchParams
   };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'three-kings-scoring.js'), 'utf8'), sandbox);
   vm.runInNewContext(source.slice(0, startup) +
     '\nglobalThis.sharing = { calculateRows, escapeHtml, liveUrl };', sandbox);
   return sandbox.sharing;
@@ -49,5 +51,13 @@ test('viewer ranking matches singles and partner-change scores', () => {
 test('viewer escapes player names before inserting markup', () => {
   const { escapeHtml } = sharing();
   assert.equal(escapeHtml('<img src=x onerror=alert(1)>'), '&lt;img src=x onerror=alert(1)&gt;');
+});
+
+test('live three kings ranking uses the shared 2/1/0 calculation and equal sport weights', () => {
+  const { calculateRows } = sharing();
+  const matches = ['tennis', 'badminton', 'tableTennis'].map(discipline => ({ discipline, playersA: ['A','B'], playersB: ['C','D'], scoreA: 0, scoreB: 0 }));
+  const rows = calculateRows({ format: 'threeKings', mode: 'partnerMix', teams: ['A','B','C','D'], matches });
+  assert.ok(rows.every(r => r.total === 50 && r.rank === 1));
+  assert.ok(rows.every(r => r.sports.tennis.draws === 1));
 });
 

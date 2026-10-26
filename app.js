@@ -5,11 +5,17 @@
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
   const today = new Date().toISOString().slice(0, 10);
+  const disciplines = [
+    { id: 'tennis', name: 'Tennis', unit: 'Platz' },
+    { id: 'badminton', name: 'Badminton', unit: 'Feld' },
+    { id: 'tableTennis', name: 'Tischtennis', unit: 'Platte' }
+  ];
+  const disciplineDefaults = { tennis: { courts: 2, games: 2 }, badminton: { courts: 2, games: 3 }, tableTennis: { courts: 2, games: 1 } };
 
   const defaults = {
     name: 'Saisonabschluss Mixed', date: today, startTime: '17:00', courts: 3,
     duration: 20, breakDuration: 5, mode: 'limited', gamesPerTeam: 3,
-    format: 'doubles', entryType: 'teams', pairingMode: 'random', participantDrafts: {},
+    format: 'doubles', entryType: 'teams', pairingMode: 'random', participantDrafts: {}, disciplineSettings: disciplineDefaults,
     participants: ['Team Aufschlag', 'Team Volley', 'Team Grundlinie', 'Team Matchball', 'Team Slice', 'Team Topspin'],
     strengths: [2, 2, 2, 2, 2, 2],
     teams: [], matches: [], generatedAt: null, liveId: null
@@ -17,6 +23,7 @@
   const library = loadLibrary();
   let activeTournamentId = library.activeId;
   let state = loadState(activeTournamentId);
+  let selectedScoringName = null;
   let timerRemainingSeconds = state.duration * 60;
   let timerEndAt = null;
   let timerInterval = null;
@@ -44,7 +51,17 @@
     try {
       const merged = saved ? { ...defaults, ...saved } : structuredClone(defaults);
       merged.participantDrafts = { ...(saved?.participantDrafts || {}) };
-      merged.format = merged.format === 'singles' ? 'singles' : 'doubles';
+      merged.format = ['singles', 'threeKings'].includes(merged.format) ? merged.format : 'doubles';
+      merged.disciplineSettings = Object.fromEntries(disciplines.map(d => [d.id, {
+        flexible: saved?.disciplineSettings?.[d.id]?.flexible === true,
+        courts: clampNumber(saved?.disciplineSettings?.[d.id]?.courts ?? disciplineDefaults[d.id].courts, 1, 12, 2),
+        games: clampNumber(saved?.disciplineSettings?.[d.id]?.games ?? disciplineDefaults[d.id].games, 1, 48, 2)
+      }]));
+      if (merged.format === 'threeKings') { merged.entryType = 'players'; merged.mode = 'partnerMix'; }
+      if (merged.format === 'threeKings') merged.courts = disciplines.reduce((sum, d) => sum + merged.disciplineSettings[d.id].courts, 0);
+      if (merged.format === 'threeKings') merged.matches.forEach(match => {
+        if (!match.scoringMode && [match.scoreA, match.scoreB].every(value => value === '' || value == null)) initializeSetMatch(match);
+      });
       if (merged.format === 'singles') { merged.entryType = 'players'; merged.mode = 'limited'; }
       if (!['limited', 'partnerMix'].includes(merged.mode)) {
         merged.mode = 'limited'; merged.teams = []; merged.matches = []; merged.generatedAt = null;
@@ -56,6 +73,12 @@
   function loadState(id) {
     try { return normalizeState(JSON.parse(localStorage.getItem(TOURNAMENT_KEY(id)))); }
     catch { return structuredClone(defaults); }
+  }
+  function initializeSetMatch(match) {
+    Object.assign(match, { scoringMode: 'sets7', sets: [], currentSetA: 0, currentSetB: 0, finished: false, scoreA: '', scoreB: '' });
+  }
+  function matchHasProgress(match) {
+    return [match.scoreA, match.scoreB].some(value => value !== '' && value != null) || !!match.sets?.length || match.currentSetA > 0 || match.currentSetB > 0;
   }
   function saveLibrary() { localStorage.setItem(LIBRARY_KEY, JSON.stringify(library)); }
   function saveState(notify = true) {
@@ -93,6 +116,12 @@
     state.date = $('#tournamentDate').value;
     state.startTime = $('#startTime').value;
     state.courts = clampNumber($('#courtCount').value, 1, 12, 1);
+    state.disciplineSettings = Object.fromEntries(disciplines.map(d => [d.id, {
+      flexible: $(`#${d.id}Flexible`).checked,
+      courts: clampNumber($(`#${d.id}Courts`).value, 1, 12, 2),
+      games: clampNumber($(`#${d.id}Games`).value, 1, 48, 2)
+    }]));
+    if (state.format === 'threeKings') state.courts = disciplines.reduce((sum, d) => sum + state.disciplineSettings[d.id].courts, 0);
     state.duration = clampNumber($('#matchDuration').value, 5, 180, 20);
     state.breakDuration = clampNumber($('#breakDuration').value, 0, 60, 5);
     state.gamesPerTeam = clampNumber($('#gamesPerTeam').value, 1, 20, 3);
@@ -112,6 +141,11 @@
     $('#startTime').value = state.startTime; $('#courtCount').value = state.courts;
     $('#matchDuration').value = state.duration; $('#breakDuration').value = state.breakDuration;
     $('#gamesPerTeam').value = state.gamesPerTeam; $('#pairingMode').value = state.pairingMode;
+    disciplines.forEach(d => {
+      $(`#${d.id}Courts`).value = state.disciplineSettings[d.id].courts;
+      $(`#${d.id}Games`).value = state.disciplineSettings[d.id].games;
+      $(`#${d.id}Flexible`).checked = state.disciplineSettings[d.id].flexible === true;
+    });
     $(`input[name="format"][value="${state.format}"]`).checked = true;
     const radio = $(`input[name="mode"][value="${state.mode}"]`); if (radio) radio.checked = true;
     state.strengths = state.participants.map((_, index) => clampNumber(state.strengths?.[index], 1, 3, 2));
@@ -119,12 +153,12 @@
   }
 
   function rememberParticipants() {
-    const key = state.format === 'singles' ? 'singles' : state.entryType;
+    const key = state.format === 'singles' ? 'singles' : state.format === 'threeKings' ? 'threeKings' : state.entryType;
     state.participantDrafts[key] = { participants: [...state.participants], strengths: [...state.strengths] };
   }
 
   function restoreParticipants() {
-    const key = state.format === 'singles' ? 'singles' : state.entryType;
+    const key = state.format === 'singles' ? 'singles' : state.format === 'threeKings' ? 'threeKings' : state.entryType;
     const draft = state.participantDrafts[key];
     state.participants = draft ? [...draft.participants] : state.entryType === 'teams'
       ? ['Team 1', 'Team 2', 'Team 3', 'Team 4']
@@ -159,7 +193,9 @@
     if (!await confirmPlanChange()) { hydrateForm(); return; }
     readForm(); rememberParticipants();
     state.format = format; state.mode = 'limited';
-    state.entryType = format === 'singles' ? 'players' : 'teams';
+    state.entryType = format === 'doubles' ? 'teams' : 'players';
+    if (format === 'threeKings') state.mode = 'partnerMix';
+    state.courts = format === 'threeKings' ? disciplines.reduce((sum, d) => sum + state.disciplineSettings[d.id].courts, 0) : Math.min(12, state.courts);
     restoreParticipants(); clearPlan(); hydrateForm(); hideNotice(); saveState(); renderOutputs();
   }
 
@@ -209,9 +245,14 @@
 
   function updateModeUI() {
     const singles = state.format === 'singles', mix = state.mode === 'partnerMix';
+    const kings = state.format === 'threeKings';
+    $('#disciplineSettings').classList.toggle('is-hidden', !kings);
+    $('#threeKingsScoringRules').classList.toggle('is-hidden', !kings);
+    $('#courtCountWrap').classList.toggle('is-hidden', kings);
     $('#modeHeading').textContent = singles ? 'Spiele pro Spieler' : 'Doppelmodus';
-    $('#modeSelector').classList.toggle('is-hidden', singles);
-    $$('input[name="mode"]').forEach(input => { input.disabled = singles; });
+    $('#modeSelector').classList.toggle('is-hidden', singles || kings);
+    $$('input[name="mode"]').forEach(input => { input.disabled = singles || kings; });
+    if (kings) $('#modeHeading').textContent = 'Drei Disziplinen planen';
     $('#singlesHelper').classList.toggle('is-hidden', !singles);
     $('#entrySelector').classList.toggle('is-hidden', singles || mix);
     $$('.toggle button').forEach(b => {
@@ -219,6 +260,7 @@
       b.setAttribute('aria-pressed', String(b.dataset.entry === state.entryType));
     });
     $('#gamesPerTeamWrap').classList.remove('is-hidden');
+    $('#gamesPerTeamWrap').classList.toggle('is-hidden', kings);
     $('#gamesPerTeamLabel').textContent = singles || mix ? 'Spiele pro Spieler' : 'Spiele pro Team';
     $('#participantsHeading').textContent = singles || mix ? 'Spieler' : 'Teilnehmer';
     $('#pairingWrap').classList.toggle('is-hidden', singles || state.entryType !== 'players' || mix);
@@ -233,6 +275,17 @@
   function updateSetupSummary() {
     const singles = state.format === 'singles', mix = state.mode === 'partnerMix';
     const count = state.participants.filter(name => name.trim()).length;
+    if (state.format === 'threeKings') {
+      renderDisciplineSuggestion(count);
+      $('#setupSummary').textContent = `Drei Königsturnier · ${count} Spieler · ` + disciplines.map(d => {
+        const { courts, games } = state.disciplineSettings[d.id];
+        return `${d.name}: ${courts} ${courts === 1 ? d.unit : d.unit === 'Platte' ? 'Platten' : d.unit === 'Feld' ? 'Felder' : 'Plätze'}, ${games} ${games === 1 ? 'Spiel' : 'Spiele'} pro Person`;
+      }).join(' · ');
+      const errors = disciplines.map(d => { const error = threeKingsValidation(count, state.disciplineSettings[d.id].games, state.disciplineSettings[d.id].flexible); return error ? `${d.name}: ${error}` : ''; }).filter(Boolean);
+      $('#planningHint').textContent = errors.join(' ');
+      $('#planningHint').classList.toggle('is-hidden', !errors.length);
+      return;
+    }
     const teams = state.entryType === 'teams' ? count : Math.floor(count / 2);
     const competitors = singles ? count : teams;
     const games = mix ? state.gamesPerTeam : Math.min(state.gamesPerTeam, Math.max(0, competitors - 1));
@@ -267,7 +320,7 @@
 
   async function createTournament() {
     readForm(); hideNotice();
-    if (state.matches.some(m => m.scoreA !== '' || m.scoreB !== '') && !await confirmAction('Spielplan neu erstellen und vorhandene Ergebnisse löschen?')) return;
+    if (state.matches.some(matchHasProgress) && !await confirmAction('Spielplan neu erstellen und vorhandene Ergebnisse löschen?')) return;
     try {
       generateTournamentPlan();
     } catch (error) { showNotice(error.message); }
@@ -275,7 +328,13 @@
 
   function generateTournamentPlan() {
     let selected;
-    if (state.format === 'singles') {
+    if (state.format === 'threeKings') {
+      const players = state.participants.map(n => n.trim()).filter(Boolean);
+      const matches = generateThreeKings(players);
+      state.teams = players;
+      state.matches = matches;
+      state.courts = disciplines.reduce((sum, d) => sum + state.disciplineSettings[d.id].courts, 0);
+    } else if (state.format === 'singles') {
       const players = state.participants.map(n => n.trim()).filter(Boolean);
       if (players.length < 2) throw new Error('Bitte trage mindestens zwei Spieler ein.');
       if (new Set(players.map(n => n.toLowerCase())).size !== players.length) throw new Error('Jeder Spielername muss eindeutig sein.');
@@ -296,10 +355,160 @@
       const base = generateRoundRobin(teams);
       selected = limitRounds(base, state.gamesPerTeam, teams.length);
     }
-    state.matches = scheduleMatches(selected);
+    if (state.format !== 'threeKings') state.matches = scheduleMatches(selected);
     resetRoundTimer();
     state.generatedAt = Date.now(); saveState(); renderOutputs(); showTab('schedule');
     return { teams: state.teams.length, matches: state.matches.length };
+  }
+
+  function courtLabel(match) {
+    if (state.format !== 'threeKings') return `Platz ${match.court}`;
+    const scheduled = match.discipline ? match : state.matches.find(m => m.court === match.court && m.discipline);
+    const sport = disciplines.find(d => d.id === scheduled?.discipline);
+    if (sport) return `${sport.name} · ${sport.unit} ${scheduled.disciplineCourt}`;
+    let offset = 0;
+    for (const d of disciplines) {
+      const count = state.disciplineSettings[d.id].courts;
+      if (match.court <= offset + count) return `${d.name} · ${d.unit} ${match.court - offset}`;
+      offset += count;
+    }
+    return `Platz ${match.court}`;
+  }
+
+  function matchTypeLabel(match) {
+    if (match.matchKind === 'singles') return 'Einzel';
+    if (match.matchKind !== 'triple') return '';
+    const start = Math.floor((match.sequence - 1) * state.duration * 60 / 3);
+    const end = Math.floor(match.sequence * state.duration * 60 / 3);
+    return `Dreierrunde · Einzel ${match.sequence}/3 · ${formatCountdown(start)}–${formatCountdown(end)} im Zeitblock`;
+  }
+
+  function greatestCommonDivisor(a, b) {
+    while (b) [a, b] = [b, a % b];
+    return a;
+  }
+
+  function suggestThreeKingsGames(playerCount, settings) {
+    if (!Number.isInteger(playerCount) || playerCount < 4) return null;
+    const courts = disciplines.map(d => settings?.[d.id]?.courts);
+    if (courts.some(n => !Number.isInteger(n) || n < 1 || n > 12)) return null;
+    // Reduce the court ratio, then use the smallest multiplier that forms complete doubles.
+    const divisor = courts.reduce(greatestCommonDivisor);
+    const base = courts.map(n => n / divisor);
+    const unit = [1, 2, 3, 4].find(k => base.every((g, i) => playerCount * g * k % (settings[disciplines[i].id].flexible ? 2 : 4) === 0));
+    return Object.fromEntries(disciplines.map((d, index) => [d.id, courts[index] / divisor * unit]));
+  }
+
+  function renderDisciplineSuggestion(count) {
+    const suggestion = suggestThreeKingsGames(count, state.disciplineSettings);
+    const button = $('#applyDisciplineSuggestion');
+    button.disabled = !suggestion;
+    $('#disciplineSuggestion').textContent = suggestion
+      ? `Kleinster Vorschlag für ${count} Spieler: ${disciplines.map(d => `${d.name} ${suggestion[d.id]} ${suggestion[d.id] === 1 ? 'Spiel' : 'Spiele'}`).join(' · ')} pro Person. Die Spielanzahlen entsprechen dem Verhältnis der Plätze; innerhalb jeder Disziplin spielen alle gleich oft. Der Vorschlag aktualisiert sich bei Änderungen an Spielern oder Plätzen.`
+      : 'Für einen Spielvorschlag bitte mindestens vier Spieler eintragen.';
+  }
+
+  function applyDisciplineSuggestion() {
+    readForm();
+    const count = state.participants.filter(name => name.trim()).length;
+    const suggestion = suggestThreeKingsGames(count, state.disciplineSettings);
+    if (!suggestion || state.format !== 'threeKings') return;
+    disciplines.forEach(d => { $(`#${d.id}Games`).value = suggestion[d.id]; });
+    readForm();
+  }
+
+  function threeKingsValidation(count, games, flexible = false) {
+    if (count < 4) return 'Für wechselnde Doppel werden mindestens vier Spieler benötigt.';
+    if (flexible) return count * games % 2 ? 'Mit Einzel und Dreierrunden muss die Gesamtzahl der Einsätze gerade sein. Bei ungerader Spielerzahl bitte eine gerade Spielanzahl pro Person wählen.' : '';
+    if ((count * games) % 4) {
+      const step = count % 2 ? 4 : 2;
+      return `Bei ${count} Spielern sind für exakt gleiche Einsätze Vielfache von ${step} möglich, zum Beispiel ${step}, ${step * 2} oder ${step * 3} Spiele pro Person.`;
+    }
+    return '';
+  }
+
+  function generateThreeKings(players) {
+    if (new Set(players.map(n => n.toLowerCase())).size !== players.length) throw new Error('Jeder Spielername muss eindeutig sein.');
+    const remaining = {};
+    for (const d of disciplines) {
+      const settings = state.disciplineSettings[d.id];
+      if (!settings || !Number.isInteger(settings.courts) || settings.courts < 1 || settings.courts > 12 || !Number.isInteger(settings.games) || settings.games < 1 || settings.games > 48) throw new Error(`${d.name}: Bitte 1–12 Plätze und 1–48 Spiele pro Person wählen.`);
+      const error = threeKingsValidation(players.length, settings.games, settings.flexible);
+      if (error) throw new Error(`${d.name}: ${error}`);
+      remaining[d.id] = new Map(players.map(p => [p, settings.games]));
+    }
+    const strengths = Object.fromEntries(players.map(p => [p, clampNumber(state.strengths[state.participants.indexOf(p)], 1, 3, 2)]));
+    const partners = new Map(), opponents = new Map(), lastSlot = new Map();
+    const output = [];
+    let slot = 0;
+    while (disciplines.some(d => [...remaining[d.id].values()].some(n => n > 0))) {
+      const busy = new Set(), block = [];
+      const courtUse = Object.fromEntries(disciplines.map(d => [d.id, 0]));
+      // Reconsider every sport after each match. Largest outstanding quotas have priority.
+      while (true) {
+        const options = disciplines.map((d, index) => {
+          const pool = players.filter(p => !busy.has(p) && remaining[d.id].get(p) > 0)
+            .map(p => ({ name: p, left: remaining[d.id].get(p), last: lastSlot.get(p) ?? -1, tie: Math.random() }))
+            .sort((a, b) => b.left - a.left || a.last - b.last || a.tie - b.tie);
+          const quota = remaining[d.id];
+          const flexible = state.disciplineSettings[d.id].flexible;
+          const total = [...quota.values()].reduce((a, b) => a + b, 0);
+          const candidates = flexible ? [{ size: 4, cost: 1 }, { size: 3, cost: 2 }, { size: 2, cost: 1 }] : [{ size: 4, cost: 1 }];
+          const choice = candidates.find(({ size, cost }) => {
+            if (pool.length < size || pool.slice(0, size).some(p => p.left < cost)) return false;
+            const selected = new Set(pool.slice(0, size).map(p => p.name));
+            const left = total - size * cost;
+            return players.every(p => quota.get(p) - (selected.has(p) ? cost : 0) <= left / (flexible ? 2 : 4));
+          });
+          return { d, pool, index, choice, load: total / state.disciplineSettings[d.id].courts };
+        }).filter(o => {
+          return courtUse[o.d.id] < state.disciplineSettings[o.d.id].courts && o.choice;
+        })
+          .sort((a, b) => b.load - a.load || ((a.index + slot) % 3) - ((b.index + slot) % 3));
+        if (!options.length) break;
+        const { d, pool, choice } = options[0];
+        const group = pool.slice(0, choice.size).map(p => p.name);
+        const quota = remaining[d.id];
+        if (choice.size < 4) {
+          const court = disciplines.slice(0, disciplines.indexOf(d)).reduce((sum, sport) => sum + state.disciplineSettings[sport.id].courts, 0) + ++courtUse[d.id];
+          const reservationId = crypto.randomUUID();
+          const pairs = choice.size === 3 ? [[group[0], group[1]], [group[0], group[2]], [group[1], group[2]]] : [[group[0], group[1]]];
+          group.forEach(p => { quota.set(p, quota.get(p) - choice.cost); busy.add(p); lastSlot.set(p, slot); });
+          pairs.forEach(([a, b], index) => {
+            incrementCount(opponents, pairKey(a, b));
+            block.push({ id: crypto.randomUUID(), teamA: a, teamB: b, playersA: [a], playersB: [b],
+              discipline: d.id, disciplineCourt: courtUse[d.id], court, slot, round: slot + 1, roundLabel: `Zeitblock ${slot + 1}`,
+              matchKind: choice.size === 3 ? 'triple' : 'singles', reservationId, sequence: index + 1,
+              sequenceCount: pairs.length, scoreA: '', scoreB: '' });
+          });
+          continue;
+        }
+        const choices = [[[group[0], group[1]], [group[2], group[3]]], [[group[0], group[2]], [group[1], group[3]]], [[group[0], group[3]], [group[1], group[2]]]];
+        shuffle(choices);
+        choices.sort((a, b) => mixPairingScore(a, partners, opponents, strengths) - mixPairingScore(b, partners, opponents, strengths));
+        const [playersA, playersB] = choices[0];
+        incrementCount(partners, pairKey(...playersA)); incrementCount(partners, pairKey(...playersB));
+        playersA.forEach(a => playersB.forEach(b => incrementCount(opponents, pairKey(a, b))));
+        group.forEach(p => { quota.set(p, quota.get(p) - 1); busy.add(p); lastSlot.set(p, slot); });
+        const court = disciplines.slice(0, disciplines.indexOf(d)).reduce((sum, sport) => sum + state.disciplineSettings[sport.id].courts, 0) + ++courtUse[d.id];
+        block.push({ id: crypto.randomUUID(), teamA: playersA.join(' & '), teamB: playersB.join(' & '), playersA, playersB,
+          discipline: d.id, court, disciplineCourt: courtUse[d.id], slot, round: slot + 1, roundLabel: `Zeitblock ${slot + 1}`, scoreA: '', scoreB: '' });
+      }
+      if (!block.length) throw new Error('Die Disziplinen konnten nicht vollständig geplant werden. Bitte Einstellungen prüfen.');
+      const byes = players.filter(p => !busy.has(p));
+      block.forEach(m => { m.roundNote = byes.length ? `Pause: ${byes.join(', ')}` : ''; });
+      output.push(...block); slot++;
+    }
+    output.forEach(initializeSetMatch);
+    return output;
+  }
+
+  function renderDisciplineOverview() {
+    const root = $('#disciplineOverview');
+    const visible = state.format === 'threeKings' && state.matches.length > 0;
+    root.classList.toggle('is-hidden', !visible);
+    if (!visible) { root.innerHTML = ''; return; }
+    root.innerHTML = `<table><caption>Geplante Einsätze pro Person</caption><thead><tr><th>Spieler</th>${disciplines.map(d => `<th>${d.name}</th>`).join('')}</tr></thead><tbody>${state.teams.map(p => `<tr><td>${escapeHtml(p)}</td>${disciplines.map(d => `<td>${state.matches.filter(m => m.discipline === d.id && [...m.playersA, ...m.playersB].includes(p)).length}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
   }
 
   function generateSingles(players, requestedGames) {
@@ -471,6 +680,7 @@
   }
 
   function additionalRoundError() {
+    if (state.format === 'threeKings') return 'Für weitere Spiele die Spielanzahl je Disziplin in der Vorbereitung ändern und den Plan neu erstellen.';
     if (!state.matches.length) return 'Erstelle zuerst einen Spielplan.';
     if (state.mode === 'partnerMix') {
       if (state.teams.length < 4 || state.teams.length % 4) return 'Genau ein weiteres Spiel pro Spieler ist beim Partnerwechsel nur mit einer durch 4 teilbaren Spielerzahl möglich.';
@@ -577,6 +787,7 @@
   }
 
   async function removeTournamentRound(number, confirmRemoval = confirmAction) {
+    if (state.format === 'threeKings') return false;
     const tournament = state;
     const tournamentId = activeTournamentId;
     const schedule = state.matches;
@@ -620,12 +831,13 @@
   }
 
   function renderOutputs() {
+    renderDisciplineOverview();
     const hasMatches = state.matches.length > 0;
     $('#scheduleEmpty').classList.toggle('is-hidden', hasMatches);
     $('#standingsEmpty').classList.toggle('is-hidden', hasMatches);
     $('#scheduleSummary').classList.toggle('is-hidden', !hasMatches);
     $('#roundTimer').classList.toggle('is-hidden', !hasMatches);
-    $('#additionalRoundActions').classList.toggle('is-hidden', !hasMatches);
+    $('#additionalRoundActions').classList.toggle('is-hidden', !hasMatches || state.format === 'threeKings');
     $('#addRoundButton').disabled = !!additionalRoundError();
     $('#addRoundButton').title = additionalRoundError();
     renderRoundTimer();
@@ -715,11 +927,11 @@
   function renderSchedule() {
     const list = $('#scheduleList'); list.innerHTML = '';
     if (!state.matches.length) return;
-    const completed = state.matches.filter(m => validScore(m.scoreA) && validScore(m.scoreB)).length;
+    const completed = state.matches.filter(m => m.scoringMode === 'sets7' ? m.finished : validScore(m.scoreA) && validScore(m.scoreB)).length;
     const endSlot = Math.max(...state.matches.map(m => m.slot)) + 1;
     const endTime = addMinutes(state.startTime, endSlot * (state.duration + state.breakDuration) - state.breakDuration);
     $('#scheduleSummary').innerHTML = [
-      [state.format === 'singles' ? 'Einzel · Spieler' : state.mode === 'partnerMix' ? 'Doppel · Spieler' : 'Doppel · Teams', state.teams.length], ['Spiele', `${completed} / ${state.matches.length}`], ['Plätze', state.courts], ['Zeitraum', `${state.startTime}–${endTime} Uhr`]
+      [state.format === 'threeKings' ? 'Drei Könige · Spieler' : state.format === 'singles' ? 'Einzel · Spieler' : state.mode === 'partnerMix' ? 'Doppel · Spieler' : 'Doppel · Teams', state.teams.length], ['Spiele', `${completed} / ${state.matches.length}`], ['Plätze', state.courts], ['Zeitraum', `${state.startTime}–${endTime} Uhr`]
     ].map(([label, value]) => `<div class="summary-item"><span>${label}</span><strong>${escapeHtml(String(value))}</strong></div>`).join('');
 
     const bySlot = Map.groupBy ? Map.groupBy(state.matches, m => m.slot) : state.matches.reduce((map, m) => map.set(m.slot, [...(map.get(m.slot) || []), m]), new Map());
@@ -729,7 +941,7 @@
       const phase = matches[0].roundLabel;
       block.innerHTML = `<header class="round-header"><h3>${escapeHtml(phase)}</h3><span>${time} Uhr · ${state.duration} Min.${matches[0].roundNote ? ` · ${escapeHtml(matches[0].roundNote)}` : ''}</span></header>`;
       const roundNumbers = [...new Set(matches.map(match => match.round))];
-      roundNumbers.forEach(number => {
+      (state.format === 'threeKings' ? [] : roundNumbers).forEach(number => {
         const remove = document.createElement('button');
         remove.type = 'button'; remove.className = 'button button-danger';
         remove.textContent = roundNumbers.length > 1 ? `Rotation mit Runde ${number} entfernen` : 'Rotation entfernen';
@@ -738,14 +950,18 @@
         $('.round-header', block).appendChild(remove);
       });
       matches.forEach(match => {
+        if (match.scoringMode === 'sets7') { block.appendChild(createSetMatchRow(match)); return; }
         const row = document.createElement('div'); row.className = 'match-row';
-        row.innerHTML = `<span class="court-badge">Platz ${match.court}</span>
+        row.innerHTML = `<span class="court-badge">${escapeHtml(courtLabel(match))}${matchTypeLabel(match) ? `<span class="match-label">${escapeHtml(matchTypeLabel(match))}</span>` : ''}</span>
           <span class="team-name right">${escapeHtml(match.teamA)}${match.placeholder ? '<span class="match-label">wird ermittelt</span>' : ''}</span>
           <span class="versus">VS</span><span class="team-name">${escapeHtml(match.teamB)}</span>
-          <div class="score-box"><input inputmode="numeric" min="0" max="99" type="number" aria-label="Ergebnis ${escapeAttr(match.teamA)}" value="${escapeAttr(match.scoreA)}"><span>:</span><input inputmode="numeric" min="0" max="99" type="number" aria-label="Ergebnis ${escapeAttr(match.teamB)}" value="${escapeAttr(match.scoreB)}"></div>`;
+          <div class="score-box"><input inputmode="numeric" min="0" max="99" type="number" aria-label="${state.format === 'threeKings' ? 'Ballwechselpunkte' : 'Ergebnis'} ${escapeAttr(match.teamA)}" value="${escapeAttr(match.scoreA)}"><span>:</span><input inputmode="numeric" min="0" max="99" type="number" aria-label="${state.format === 'threeKings' ? 'Ballwechselpunkte' : 'Ergebnis'} ${escapeAttr(match.teamB)}" value="${escapeAttr(match.scoreB)}"></div>${state.format === 'threeKings' ? '<p class="score-feedback" aria-live="polite"></p>' : ''}`;
+        const feedback = $('.score-feedback', row);
+        if (feedback) feedback.textContent = scoringFeedback(match);
         const inputs = $$('input', row);
         inputs.forEach((input, idx) => input.addEventListener('input', () => {
           match[idx === 0 ? 'scoreA' : 'scoreB'] = input.value === '' ? '' : clampNumber(input.value, 0, 99, 0);
+          if (feedback) feedback.textContent = scoringFeedback(match);
           const bracketChanged = resolveFinalRound();
           saveState(); renderStandings(); updateSummaryProgress();
           if (bracketChanged) renderSchedule();
@@ -758,13 +974,18 @@
 
   function updateSummaryProgress() {
     if (!state.matches.length) return;
-    const completed = state.matches.filter(m => validScore(m.scoreA) && validScore(m.scoreB)).length;
+    const completed = state.matches.filter(m => m.scoringMode === 'sets7' ? m.finished : validScore(m.scoreA) && validScore(m.scoreB)).length;
     const strong = $$('.summary-item strong')[1]; if (strong) strong.textContent = `${completed} / ${state.matches.length}`;
   }
 
   function renderStandings() {
     const root = $('#standingsContent'); root.innerHTML = '';
+    $('#rankingRule').textContent = state.format === 'threeKings' ? '2 / 1 / 0 Tabellenpunkte · jede Disziplin zählt ⅓' : 'Sortierung: Siege · Differenz · erzielte Punkte';
     if (!state.matches.length) return;
+    if (state.format === 'threeKings') {
+      root.innerHTML = globalThis.threeKingsScoring.render(state, selectedScoringName);
+      return;
+    }
     const groups = state.mode === 'groups' ? ['A', 'B'] : [''];
     groups.forEach(group => {
       const names = state.mode === 'groups'
@@ -793,6 +1014,69 @@
     });
     return Object.values(table).map(r => ({ ...r, diff: r.for - r.against }))
       .sort((a, b) => b.wins - a.wins || b.diff - a.diff || b.for - a.for || a.name.localeCompare(b.name, 'de'));
+  }
+
+  function scoringFeedback(match) {
+    if (!validScore(match.scoreA) || !validScore(match.scoreB)) return 'Ballwechselpunkte eintragen · Sieg 2, Unentschieden 1, Niederlage 0 Tabellenpunkte pro Person.';
+    const a = Number(match.scoreA), b = Number(match.scoreB);
+    if (a === b) return 'Unentschieden · alle Beteiligten erhalten 1 Tabellenpunkt.';
+    const winners = a > b ? match.playersA : match.playersB;
+    const names = winners?.join(' & ') || (a > b ? match.teamA : match.teamB);
+    return `Sieg für ${names} · ${winners?.length > 1 ? 'jeweils ' : ''}2 Tabellenpunkte. Gegenseite: 0.`;
+  }
+
+  function createSetMatchRow(match) {
+    const row = document.createElement('div'); row.className = 'match-row set-match-row';
+    const result = globalThis.threeKingsScoring.setSummary(match);
+    const completedSets = (match.sets || []).map((set, i) => `Satz ${i + 1}: ${set.a}:${set.b}${set.atTimeLimit ? ' (Zeitende)' : ''}`).join(' · ');
+    const finalFeedback = match.finished ? result.a === result.b ? 'Unentschieden · alle Beteiligten erhalten 1 Tabellenpunkt.' : `Sieg für ${result.a > result.b ? match.teamA : match.teamB} · je Person 2 Tabellenpunkte; Gegenseite 0.` : 'Abgeschlossene Sätze mit ihrem Ergebnis nachtragen, zum Beispiel 7:4 oder 6:7.';
+    row.innerHTML = `<span class="court-badge">${escapeHtml(courtLabel(match))}${matchTypeLabel(match) ? `<span class="match-label">${escapeHtml(matchTypeLabel(match))}</span>` : ''}</span>
+      <span class="team-name right">${escapeHtml(match.teamA)}</span><span class="versus">VS</span><span class="team-name">${escapeHtml(match.teamB)}</span>
+      <div class="set-summary"><strong>${result.a} : ${result.b}</strong><span>Sätze · ${match.finished ? 'beendet' : 'erfasst'}</span></div>
+      <div class="set-editor"><p class="helper set-history">${escapeHtml(completedSets || 'Noch kein Satz abgeschlossen.')}</p>
+      <div class="set-manual"${match.finished ? ' hidden' : ''}><strong>Abgeschlossenen Satz nachtragen</strong><div class="set-actions"><label class="field">Satzpunkte ${escapeHtml(match.teamA)}<input data-set-input="A" type="number" min="0" max="7" placeholder="z. B. 7"></label><label class="field">Satzpunkte ${escapeHtml(match.teamB)}<input data-set-input="B" type="number" min="0" max="7" placeholder="z. B. 4"></label><button type="button" class="button button-ghost" data-record-set>Satz speichern</button></div></div>
+      <p class="score-feedback" aria-live="polite">${escapeHtml(finalFeedback)}${match.finished && match.timeLimitNote ? ` ${escapeHtml(match.timeLimitNote)}` : ''}</p>
+      <div class="set-final"${match.finished ? ' hidden' : ''}><strong>Letzter unvollständiger Satz bei Zeitende (optional)</strong><p class="helper">Stand bei Abpfiff eintragen. Ohne angefangenen Satz beide Felder leer lassen. Er zählt nur bei Führung und zusammen mindestens 4 Punkten.</p><div class="set-actions"><label class="field">Letzter Satz ${escapeHtml(match.teamA)}<input data-final-input="A" type="number" min="0" max="6" value="${match.currentSetA || match.currentSetB ? escapeAttr(match.currentSetA) : ''}" placeholder="0"></label><label class="field">Letzter Satz ${escapeHtml(match.teamB)}<input data-final-input="B" type="number" min="0" max="6" value="${match.currentSetA || match.currentSetB ? escapeAttr(match.currentSetB) : ''}" placeholder="0"></label></div></div>
+      <div class="set-actions"><button class="button button-primary" type="button" data-finish-match${match.finished ? ' hidden' : ''}>Spiel bei Zeitende abschließen</button><button class="button button-ghost" type="button" data-undo-set${match.previousSetState ? '' : ' disabled'}>${match.finished ? 'Abschluss rückgängig' : 'Letzte Eingabe rückgängig'}</button></div>
+      <p class="notice is-hidden" data-set-error role="alert"></p></div>`;
+    const apply = action => {
+      try {
+        Object.assign(match, action()); saveState(); renderStandings(); updateSummaryProgress();
+        // Keep the entry fields in place while updating the recorded results.
+        const fresh = createSetMatchRow(match);
+        for (const selector of ['.set-summary', '.set-history', '.score-feedback']) $(selector, row).innerHTML = $(selector, fresh).innerHTML;
+        for (const selector of ['.set-final', '.set-manual', '[data-finish-match]']) $(selector, row).hidden = match.finished;
+        const undo = $('[data-undo-set]', row); undo.disabled = !match.previousSetState; undo.textContent = match.finished ? 'Abschluss rückgängig' : 'Letzte Eingabe rückgängig';
+        $('[data-set-error]', row).classList.add('is-hidden');
+      } catch (error) { const notice = $('[data-set-error]', row); notice.textContent = error.message; notice.classList.remove('is-hidden'); }
+    };
+    $('[data-record-set]', row)?.addEventListener('click', () => {
+      const a = $('[data-set-input="A"]', row).value, b = $('[data-set-input="B"]', row).value;
+      apply(() => {
+        if (a === '' || b === '') throw new Error('Bitte beide Satzpunktstände eintragen.');
+        const next = globalThis.threeKingsScoring.recordSet(match, Number(a), Number(b));
+        $('[data-set-input="A"]', row).value = ''; $('[data-set-input="B"]', row).value = '';
+        return next;
+      });
+    });
+    $('[data-finish-match]', row)?.addEventListener('click', () => apply(() => {
+      if ($$('[data-set-input]', row).some(input => input.value !== '')) throw new Error('Bitte den eingetragenen vollständigen Satz zuerst speichern oder die Eingabefelder leeren.');
+      const a = $('[data-final-input="A"]', row).value, b = $('[data-final-input="B"]', row).value;
+      if ((a === '') !== (b === '')) throw new Error('Bitte beide Punktstände des letzten Satzes eingeben, auch eine 0.');
+      return globalThis.threeKingsScoring.finishMatch(match, a === '' ? 0 : Number(a), b === '' ? 0 : Number(b));
+    }));
+    $$('[data-final-input]', row).forEach(input => input.addEventListener('change', () => {
+      const a = $('[data-final-input="A"]', row).value, b = $('[data-final-input="B"]', row).value;
+      const values = [a === '' ? 0 : Number(a), b === '' ? 0 : Number(b)];
+      if (values.every(value => Number.isInteger(value) && value >= 0 && value <= 6)) {
+        [match.currentSetA, match.currentSetB] = values; saveState();
+      }
+    }));
+    $('[data-undo-set]', row).addEventListener('click', () => {
+      apply(() => globalThis.threeKingsScoring.undoSetAction(match));
+      for (const side of ['A', 'B']) $(`[data-final-input="${side}"]`, row).value = match.currentSetA || match.currentSetB ? match[`currentSet${side}`] : '';
+    });
+    return row;
   }
 
   function calculatePlayerStandings(names, matches) {
@@ -863,198 +1147,6 @@
   function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[c]); }
   function escapeAttr(value) { return escapeHtml(value); }
 
-  async function downloadTournamentPdf() {
-    if (!state.matches.length) {
-      alert('Erstelle zuerst einen Spielplan. Danach kann die PDF-Datei heruntergeladen werden.');
-      return;
-    }
-    const logo = await loadPdfLogo();
-    const pdf = buildSchedulePdf(logo);
-    const blob = new Blob([pdfBinaryToBytes(pdf)], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    const filename = (state.name || 'Tennisturnier').replace(/[^a-z0-9äöüß-]+/gi, '-').replace(/^-|-$/g, '');
-    link.href = url; link.download = `${filename || 'Tennisturnier'}-Spielplan.pdf`;
-    link.style.display = 'none'; document.body.appendChild(link); link.click(); link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
-  }
-
-  function buildSchedulePdf(logo = null) {
-    const modeName = state.format === 'singles' ? 'Einzel' : state.mode === 'partnerMix' ? 'Doppel | Partnerwechsel' : 'Doppel | Feste Teams';
-    const bySlot = state.matches.reduce((map, match) => map.set(match.slot, [...(map.get(match.slot) || []), match]), new Map());
-    const slots = [...bySlot.entries()].map(([slot, matches], index) => ({
-      number: index + 1,
-      label: matches[0].roundLabel,
-      note: matches[0].roundNote || '',
-      time: addMinutes(state.startTime, slot * (state.duration + state.breakDuration)),
-      matches
-    }));
-    const courts = Array.from({ length: state.courts }, (_, index) => index + 1);
-    const courtGroups = chunkArray(courts, 3), rowGroups = chunkArray(slots, 7);
-    const pageDefinitions = [];
-    rowGroups.forEach((rows, rowGroupIndex) => courtGroups.forEach((pageCourts, courtGroupIndex) => {
-      pageDefinitions.push({ rows, pageCourts, rowGroupIndex, courtGroupIndex });
-    }));
-    const pages = pageDefinitions.map((definition, pageIndex) => buildSchedulePage(
-      definition, pageIndex, pageDefinitions.length, courtGroups.length, rowGroups.length, modeName, Boolean(logo)
-    ));
-    return assemblePdf(pages, 842, 595, logo);
-  }
-
-  function loadPdfLogo() {
-    return new Promise(resolve => {
-      const image = new Image();
-      image.onload = () => {
-        const scale = Math.min(1, 64 / image.naturalWidth, 64 / image.naturalHeight);
-        const width = Math.max(1, Math.round(image.naturalWidth * scale));
-        const height = Math.max(1, Math.round(image.naturalHeight * scale));
-        const canvas = document.createElement('canvas');
-        canvas.width = width; canvas.height = height;
-        const context = canvas.getContext('2d', { willReadFrequently: true });
-        context.fillStyle = '#ffffff'; context.fillRect(0, 0, width, height);
-        context.drawImage(image, 0, 0, width, height);
-        const pixels = context.getImageData(0, 0, width, height).data;
-        let data = '';
-        for (let index = 0; index < pixels.length; index += 4) {
-          data += String.fromCharCode(pixels[index], pixels[index + 1], pixels[index + 2]);
-        }
-        resolve({ width, height, data });
-      };
-      image.onerror = () => resolve(null);
-      image.src = 'logo-rsv-finningen.png';
-    });
-  }
-
-  function pdfBinaryToBytes(value) {
-    const bytes = new Uint8Array(value.length);
-    for (let index = 0; index < value.length; index++) bytes[index] = value.charCodeAt(index) & 255;
-    return bytes;
-  }
-
-  function formatPdfDate(value) {
-    const [year, month, day] = String(value).split('-');
-    return year && month && day ? `${day}.${month}.${year}` : value;
-  }
-
-  function buildSchedulePage(definition, pageIndex, totalPages, horizontalCount, verticalCount, modeName, hasLogo) {
-    const { rows, pageCourts, rowGroupIndex, courtGroupIndex } = definition;
-    const commands = ['0.09 0.19 0.37 rg', '0.82 0.86 0.93 RG', '0.7 w'];
-    const margin = 32, leftWidth = 112, courtWidth = 220, tableTop = 505, headerHeight = 28, rowHeight = 58;
-    const headingX = hasLogo ? 104 : margin;
-    if (hasLogo) commands.push('q', '54 0 0 54 32 522 cm', '/Logo Do', 'Q');
-    pdfDrawText(commands, state.name || 'Tennisturnier', headingX, 559, 'F2', 17, '0.18 0.37 0.70');
-    const meta = `${state.date ? formatPdfDate(state.date) : 'Datum offen'} | ${modeName} | ${state.duration} Min. je Spiel`;
-    pdfFillRect(commands, headingX, 532, 92, 3, '1 0.875 0.004');
-    pdfDrawText(commands, meta, headingX, 519, 'F1', 8.5, '0.23 0.30 0.43');
-    if (horizontalCount > 1) {
-      const leftArrow = courtGroupIndex > 0 ? '< ' : '';
-      const rightArrow = courtGroupIndex < horizontalCount - 1 ? ' >' : '';
-      pdfDrawText(commands, `${leftArrow}Plaetze ${pageCourts[0]}-${pageCourts.at(-1)} | Abschnitt ${courtGroupIndex + 1}/${horizontalCount}${rightArrow}`, 590, 519, 'F2', 8, '0.18 0.37 0.70');
-    }
-    const headerY = tableTop - headerHeight;
-    pdfFillRect(commands, margin, headerY, leftWidth, headerHeight, '0.18 0.37 0.70');
-    pdfDrawText(commands, 'Runde / Zeit', margin + 9, headerY + 10, 'F2', 9, '1 1 1');
-    pageCourts.forEach((court, index) => {
-      const x = margin + leftWidth + index * courtWidth;
-      pdfFillRect(commands, x, headerY, courtWidth, headerHeight, '1 0.875 0.004');
-      pdfDrawText(commands, `PLATZ ${court}`, x + 10, headerY + 10, 'F2', 9, '0.09 0.19 0.37');
-    });
-    rows.forEach((row, rowIndex) => {
-      const y = headerY - (rowIndex + 1) * rowHeight;
-      const fill = rowIndex % 2 ? '0.96 0.975 1' : '1 1 1';
-      pdfFillStrokeRect(commands, margin, y, leftWidth, rowHeight, fill);
-      pdfDrawText(commands, pdfAscii(row.label).slice(0, 18), margin + 8, y + 39, 'F2', 8.3);
-      pdfDrawText(commands, `${row.time} Uhr`, margin + 8, y + 25, 'F1', 8);
-      if (row.note) pdfDrawText(commands, pdfAscii(row.note).slice(0, 19), margin + 8, y + 11, 'F1', 6.5);
-      pageCourts.forEach((court, courtIndex) => {
-        const x = margin + leftWidth + courtIndex * courtWidth;
-        pdfFillStrokeRect(commands, x, y, courtWidth, rowHeight, fill);
-        const match = row.matches.find(item => item.court === court);
-        if (match) drawMatchCell(commands, match, x, y, courtWidth, rowHeight);
-        else pdfDrawText(commands, '-', x + 10, y + 27, 'F1', 8, '0.45 0.49 0.53');
-      });
-    });
-    const firstRound = rows[0]?.number || 0, lastRound = rows.at(-1)?.number || 0;
-    const footer = `RSV Finningen Tennis | Runden ${firstRound}-${lastRound} | Plaetze ${pageCourts[0]}-${pageCourts.at(-1)} | Seite ${pageIndex + 1}/${totalPages}`;
-    pdfDrawText(commands, footer, margin, 24, 'F1', 7.5, '0.31 0.38 0.50');
-    if (verticalCount > 1) pdfDrawText(commands, `Rundenblock ${rowGroupIndex + 1}/${verticalCount}`, 692, 24, 'F2', 7.5, '0.31 0.38 0.50');
-    return commands.join('\n');
-  }
-
-  function drawMatchCell(commands, match, x, y) {
-    const teamA = wrapPdfLine(pdfAscii(match.teamA), 41).slice(0, 2);
-    const teamB = wrapPdfLine(pdfAscii(match.teamB), 41).slice(0, 2);
-    if (wrapPdfLine(pdfAscii(match.teamA), 41).length > 2) teamA[1] = `${teamA[1].slice(0, 37)}...`;
-    if (wrapPdfLine(pdfAscii(match.teamB), 41).length > 2) teamB[1] = `${teamB[1].slice(0, 37)}...`;
-    let cursor = y + 46;
-    teamA.forEach((line, index) => { pdfDrawText(commands, `${index ? '   ' : 'A: '}${line}`, x + 8, cursor, index ? 'F1' : 'F2', 7.5); cursor -= 9; });
-    teamB.forEach((line, index) => { pdfDrawText(commands, `${index ? '   ' : 'B: '}${line}`, x + 8, cursor, index ? 'F1' : 'F2', 7.5); cursor -= 9; });
-    const result = validScore(match.scoreA) && validScore(match.scoreB) ? `${match.scoreA} : ${match.scoreB}` : '____ : ____';
-    pdfDrawText(commands, `Ergebnis: ${result}`, x + 8, y + 7, 'F2', 7.2, '0.18 0.37 0.70');
-  }
-
-  function pdfDrawText(commands, value, x, y, font, size, color = '0.09 0.19 0.37') {
-    commands.push(`${color} rg`, `BT /${font} ${size} Tf ${x} ${y} Td (${pdfEscape(pdfAscii(value))}) Tj ET`);
-  }
-  function pdfFillRect(commands, x, y, width, height, fill) {
-    commands.push(`${fill} rg`, `${x} ${y} ${width} ${height} re f`);
-  }
-  function pdfFillStrokeRect(commands, x, y, width, height, fill) {
-    commands.push(`${fill} rg`, '0.82 0.86 0.93 RG', `${x} ${y} ${width} ${height} re B`);
-  }
-  function chunkArray(items, size) {
-    const chunks = [];
-    for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
-    return chunks;
-  }
-
-  function assemblePdf(pages, width, height, logo = null) {
-    const fontId = 3 + pages.length * 2, boldFontId = fontId + 1;
-    const logoId = logo ? boldFontId + 1 : null;
-    const objects = new Array((logoId || boldFontId) + 1);
-    objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
-    const pageIds = pages.map((_, index) => 3 + index * 2);
-    objects[2] = `<< /Type /Pages /Kids [${pageIds.map(id => `${id} 0 R`).join(' ')}] /Count ${pages.length} >>`;
-    pages.forEach((stream, index) => {
-      const pageId = 3 + index * 2, contentId = pageId + 1;
-      const imageResource = logo ? ` /XObject << /Logo ${logoId} 0 R >>` : '';
-      objects[pageId] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}] /Resources << /Font << /F1 ${fontId} 0 R /F2 ${boldFontId} 0 R >>${imageResource} >> /Contents ${contentId} 0 R >>`;
-      objects[contentId] = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
-    });
-    objects[fontId] = '<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>';
-    objects[boldFontId] = '<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Bold /Encoding /WinAnsiEncoding >>';
-    if (logo) objects[logoId] = `<< /Type /XObject /Subtype /Image /Width ${logo.width} /Height ${logo.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length ${logo.data.length} >>\nstream\n${logo.data}\nendstream`;
-    let pdf = '%PDF-1.4\n%RSV-Finningen\n';
-    const offsets = new Array(objects.length).fill(0);
-    for (let id = 1; id < objects.length; id++) {
-      offsets[id] = pdf.length;
-      pdf += `${id} 0 obj\n${objects[id]}\nendobj\n`;
-    }
-    const xrefOffset = pdf.length;
-    pdf += `xref\n0 ${objects.length}\n0000000000 65535 f \n`;
-    for (let id = 1; id < objects.length; id++) pdf += `${String(offsets[id]).padStart(10, '0')} 00000 n \n`;
-    pdf += `trailer\n<< /Size ${objects.length} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-    return pdf;
-  }
-
-  function pdfAscii(value) {
-    return String(value)
-      .replace(/Ä/g, 'Ae').replace(/Ö/g, 'Oe').replace(/Ü/g, 'Ue')
-      .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7E]/g, '?');
-  }
-  function wrapPdfLine(value, maxLength) {
-    if (!value) return [''];
-    const result = []; let rest = value;
-    while (rest.length > maxLength) {
-      let cut = rest.lastIndexOf(' ', maxLength);
-      if (cut < Math.floor(maxLength * 0.6)) cut = maxLength;
-      result.push(rest.slice(0, cut).trimEnd()); rest = `  ${rest.slice(cut).trimStart()}`;
-    }
-    result.push(rest); return result;
-  }
-  function pdfEscape(value) { return value.replace(/([\\()])/g, '\\$1'); }
-
   function registerWebMcp() {
     const context = document.modelContext;
     if (!context?.registerTool) return;
@@ -1118,11 +1210,16 @@
   $$('#setupPanel input:not([type="radio"]), #setupPanel select').forEach(input => input.addEventListener('change', readForm));
   $('#addParticipant').addEventListener('click', () => { state.participants.push(''); state.strengths.push(2); renderParticipants(); saveState(); updateSetupSummary(); $$('.participant-row input').at(-1).focus(); });
   $('#generateButton').addEventListener('click', createTournament);
+  $('#standingsContent').addEventListener('click', event => {
+    const button = event.target.closest('[data-ranking-person]');
+    if (!button || state.format !== 'threeKings') return;
+    selectedScoringName = button.dataset.rankingPerson; renderStandings();
+  });
+  $('#applyDisciplineSuggestion').addEventListener('click', applyDisciplineSuggestion);
   $('#editSetup').addEventListener('click', () => showTab('setup'));
   $('#addRoundButton').addEventListener('click', addTournamentRound);
   $('#timerToggle').addEventListener('click', toggleRoundTimer);
   $('#timerReset').addEventListener('click', resetRoundTimer);
-  $('#printButton').addEventListener('click', downloadTournamentPdf);
   window.plannerLive = {
     getData: () => ({
       name: state.name, date: state.date, startTime: state.startTime,
